@@ -17,6 +17,17 @@
   const BOT_MSG = params.get('bot_msg') || '';
   const BOT_CONVERSATION = params.get('bot_conversation') || '';
 
+  // 超星官方白名单域名（必须在 CONFIG 之前定义，因为 getCxOrigin 会用到）
+  const CX_DOMAINS = [
+    'https://robot.chaoxing.com',
+    'https://robot1.chaoxing.com',
+    'https://robot2.chaoxing.com',
+    'https://robot-dev.chaoxing.com',
+    'https://robot-lc.chaoxing.com',
+    'https://robot-lc1.chaoxing.com',
+    'https://robot-lc2.chaoxing.com',
+  ];
+
   // ---------- 配置 ----------
   const CONFIG = {
     API_BASE: getApiBase(),
@@ -27,17 +38,6 @@
     // 是否本地开发环境
     IS_DEV: isDevEnv(),
   };
-
-  // 超星官方白名单域名
-  const CX_DOMAINS = [
-    'https://robot.chaoxing.com',
-    'https://robot1.chaoxing.com',
-    'https://robot2.chaoxing.com',
-    'https://robot-dev.chaoxing.com',
-    'https://robot-lc.chaoxing.com',
-    'https://robot-lc1.chaoxing.com',
-    'https://robot-lc2.chaoxing.com',
-  ];
 
   function getApiBase() {
     const base = params.get('api_base');
