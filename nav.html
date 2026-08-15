@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>功能导航</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div class="nav-panel">
+
+  <!-- 头部 -->
+  <div class="nav-header">
+    <div class="nav-header-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    </div>
+    <div>
+      <div class="nav-header-title">广大图书馆助手</div>
+      <div class="nav-header-sub">座位预约 · 定时抢座</div>
+    </div>
+  </div>
+
+  <!-- 导航列表 -->
+  <div class="nav-groups" id="navGroups"></div>
+
+</div>
+
+<!-- 二级视图：首页 FAQ -->
+<div class="nav-subview" id="subview-home">
+  <div class="nav-subview-header">
+    <button class="nav-subview-back" onclick="closeSubview()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    </button>
+    <span class="nav-subview-title">常见问题</span>
+  </div>
+  <div class="nav-subview-body" id="faqBody"></div>
+</div>
+
+<!-- 二级视图：精简态势分析 -->
+<div class="nav-subview" id="subview-analysis-mini">
+  <div class="nav-subview-header">
+    <button class="nav-subview-back" onclick="closeSubview()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    </button>
+    <span class="nav-subview-title">空座概览</span>
+    <button class="btn btn-sm" onclick="loadAnalysisMini()" style="margin-left:auto;" title="刷新">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg>
+    </button>
+  </div>
+  <div class="nav-subview-body" id="analysisBody">
+    <div class="loading"><div class="spinner"></div>加载中...</div>
+  </div>
+</div>
+
+<!-- 对话引导浮层 -->
+<div class="dialog-prompt" id="dialogPrompt">
+  <button class="prompt-close" onclick="hidePrompt()">&times;</button>
+  <div class="prompt-title" id="promptTitle"></div>
+  <div class="prompt-hint" id="promptHint"></div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(function() {
+  const { NAV_CONFIG, ICONS, sendToParent, MSG, apiGet, escapeHtml, debounce } = window.LibPanel;
+
+  let activeId = null;
+
+  // ---------- 渲染导航 ----------
+  function renderNav() {
+    const container = document.getElementById('navGroups');
+    container.innerHTML = NAV_CONFIG.map(group => `
+      <div class="nav-group-label">${escapeHtml(group.group)}</div>
+      ${group.items.map(item => `
+        <div class="nav-item ${activeId === item.id ? 'active' : ''}"
+             id="nav-${escapeHtml(item.id)}"
+             role="button"
+             tabindex="0"
+             aria-label="${escapeHtml(item.label)}：${escapeHtml(item.desc)}"
+             data-nav-id="${escapeHtml(item.id)}">
+          <span class="nav-item-icon">${ICONS[item.icon] || ICONS.list}</span>
+          <span class="nav-item-label">${escapeHtml(item.label)}</span>
+        </div>
+      `).join('')}
+    `).join('');
+
+    // 修复：用事件委托替代 onclick 字符串拼接，避免潜在 XSS
+    container.querySelectorAll('.nav-item').forEach(el => {
+      const navId = el.dataset.navId;
+      el.addEventListener('click', () => onNavClick(navId));
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onNavClick(navId);
+        }
+      });
+    });
+  }
+
+  // ---------- 导航点击处理 ----------
+  window.onNavClick = function(itemId) {
+    const item = findItem(itemId);
+    if (!item) return;
+
+    // 高亮当前项
+    activeId = itemId;
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    const el = document.getElementById('nav-' + itemId);
+    if (el) el.classList.add('active');
+
+    const action = item.action;
+
+    if (action.type === 'self') {
+      // 左栏自展开二级视图
+      showSubview(action.subview);
+      return;
+    }
+
+    if (action.type === 'load-iframe') {
+      // 请求父窗口在中间区加载 iframe
+      sendToParent(MSG.LOAD_IFRAME, {
+        target: action.target,
+        params: action.params || {},
+        navId: itemId,
+      });
+      // 同时显示兜底提示
+      if (item.fallback && item.fallback.type === 'prompt') {
+        showPrompt(item.label, item.fallback.message);
+      }
+      return;
+    }
+
+    if (action.type === 'trigger-task') {
+      // 通过 CXBOT 协议触发任务流
+      // shared.js 内部会根据 flow 自动选择 triggerTask 或 triggerByIntent
+      sendToParent(MSG.TRIGGER_TASK, {
+        flow: action.flow,
+        message: action.message,  // 传递 action.message（如"看座位图"）
+        params: action.params,
+        navId: itemId,
+      });
+      // 同时显示兜底提示
+      if (item.fallback && item.fallback.type === 'prompt') {
+        showPrompt(item.label, item.fallback.message);
+      }
+      return;
+    }
+  };
+
+  function findItem(id) {
+    for (const group of NAV_CONFIG) {
+      const item = group.items.find(i => i.id === id);
+      if (item) return item;
+    }
+    return null;
+  }
+
+  // ---------- 二级视图 ----------
+  window.showSubview = function(name) {
+    closeSubview();
+    const el = document.getElementById('subview-' + name);
+    if (el) {
+      el.classList.add('visible');
+      if (name === 'home') renderFAQ();
+      if (name === 'analysis-mini') loadAnalysisMini();
+    }
+  };
+
+  window.closeSubview = function() {
+    document.querySelectorAll('.nav-subview').forEach(el => el.classList.remove('visible'));
+  };
+
+  // ---------- FAQ 内容 ----------
+  function renderFAQ() {
+    const faqs = [
+      { q: '如何绑定图书馆账号？', a: '在对话框输入「绑定账号」，按提示输入学号和图书馆密码即可。密码会加密存储，不会明文展示。' },
+      { q: '定时抢座几点执行？', a: '每日 06:15 自动执行。设置后在右栏可查看任务状态。如需取消，在对话框输入「取消定时任务」。' },
+      { q: '为什么预约失败？', a: '常见原因：1) 座位已被他人预约 2) 当前时段不可预约 3) 有未完成的预约冲突 4) 信誉分不足。建议选择空闲座位。' },
+      { q: '如何查看座位状态？', a: '点击左侧「互动座位图」可查看实时座位状态。绿色=空闲，黄色=部分已约，红色=已约，蓝色=我的预约。' },
+      { q: '密码安全吗？', a: '密码使用 AES-GCM 加密存储，传输使用 HTTPS。平台和开发者都无法看到明文密码。' },
+      { q: '图书馆官网', a: 'https://libbooking.gzhu.edu.cn' },
+    ];
+
+    document.getElementById('faqBody').innerHTML = faqs.map((f, i) => `
+      <div class="card js-faq-item" style="cursor:pointer;" data-faq-q="${escapeHtml(f.q)}">
+        <div style="font-size:13px;font-weight:600;color:var(--color-text);margin-bottom:4px;">${escapeHtml(f.q)}</div>
+        <div style="font-size:12px;color:var(--color-text-secondary);line-height:1.5;">${escapeHtml(f.a)}</div>
+      </div>
+    `).join('');
+
+    // 修复 P1-5：用事件委托替代 onclick 注入，避免 XSS
+    document.querySelectorAll('.js-faq-item').forEach(el => {
+      el.addEventListener('click', () => askFAQ(el.dataset.faqQ));
+    });
+  }
+
+  window.askFAQ = function(question) {
+    sendToParent(MSG.TRIGGER_TASK, { flow: 'chat', message: question });
+    showPrompt('已发送问题', '请在对话框查看回复');
+  };
+
+  // ---------- 精简空座概览 ----------
+  // 后端 GET /api/rooms?type=seat 返回树形结构：
+  //   {"code":0, "tree":[{"id":1,"name":"2楼","total":500,"remain":200,"children":[...]}]}
+  // 比逐个调 /api/analysis 快得多，且已有 total/remain 字段
+  // 修复：加防抖，避免快速点击刷新按钮发多个请求
+  const loadAnalysisMiniRaw = async function() {
+    const body = document.getElementById('analysisBody');
+    body.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+
+    try {
+      const resp = await apiGet('/api/rooms', { type: 'seat' });
+      if (!resp || resp.code !== 0) throw new Error(resp ? resp.msg || '查询失败' : '无响应');
+
+      const tree = resp.tree || [];
+      if (tree.length === 0) {
+        body.innerHTML = '<div class="empty-state">暂无数据</div>';
+        return;
+      }
+
+      // 递归提取叶子节点（具体房间），计算空闲率
+      const rooms = [];
+      function walk(nodes) {
+        for (const n of nodes || []) {
+          if (n.children && n.children.length > 0) {
+            walk(n.children);
+          } else {
+            rooms.push({
+              name: n.name,
+              total: n.total || 0,
+              remain: n.remain || 0,
+            });
+          }
+        }
+      }
+      walk(tree);
+
+      if (rooms.length === 0) {
+        body.innerHTML = '<div class="empty-state">暂无房间数据</div>';
+        return;
+      }
+
+      // 按剩余空位排序，显示前 12 个
+      const sorted = rooms.sort((a, b) => b.remain - a.remain).slice(0, 12);
+      const totalRemain = rooms.reduce((s, r) => s + r.remain, 0);
+      const totalAll = rooms.reduce((s, r) => s + r.total, 0);
+
+      body.innerHTML = `
+        <div class="alert alert-success" style="margin-bottom:8px;">
+          <span>${ICONS.info}</span>
+          <div>全馆空座 ${totalRemain} / ${totalAll}（点击预约）</div>
+        </div>
+        ${sorted.map(r => {
+          const rate = r.total > 0 ? ((r.total - r.remain) / r.total * 100) : 0;
+          const badgeClass = r.remain > 10 ? 'badge-success' : r.remain > 3 ? 'badge-warning' : 'badge-danger';
+          return `
+            <div class="task-card js-reserve-room" style="cursor:pointer;" data-room-name="${escapeHtml(r.name)}">
+              <div class="task-info">
+                <div class="task-name">${escapeHtml(r.name)}</div>
+                <div class="task-meta">空 ${r.remain} / 共 ${r.total} 座</div>
+              </div>
+              <span class="badge ${badgeClass}">${rate.toFixed(0)}% 占用</span>
+            </div>
+          `;
+        }).join('')}
+      `;
+
+      // 修复 P1-5：用事件委托替代 onclick 注入
+      body.querySelectorAll('.js-reserve-room').forEach(el => {
+        el.addEventListener('click', () => reserveFromAnalysis(el.dataset.roomName));
+      });
+    } catch (e) {
+      body.innerHTML = `
+        <div class="alert alert-warning">
+          <span>${ICONS.alert}</span>
+          <div>加载失败：${escapeHtml(e.message)}</div>
+        </div>`;
+    }
+  };
+
+  // 防抖版本：500ms 内多次点击只执行最后一次
+  const loadAnalysisMini = debounce(loadAnalysisMiniRaw, 500);
+
+  window.reserveFromAnalysis = function(roomName) {
+    sendToParent(MSG.TRIGGER_TASK, { flow: 'seat-reserve', message: '我要预约 ' + roomName + ' 的座位' });
+    closeSubview();
+    showPrompt('已在对话框发起预约', '请按提示选择座位和时段');
+  };
+
+  window.loadAnalysisMini = loadAnalysisMini;
+
+  // ---------- 对话引导浮层 ----------
+  let promptTimer = null;
+  function showPrompt(title, hint) {
+    const el = document.getElementById('dialogPrompt');
+    document.getElementById('promptTitle').textContent = title;
+    document.getElementById('promptHint').textContent = hint;
+    el.classList.add('visible');
+    clearTimeout(promptTimer);
+    promptTimer = setTimeout(hidePrompt, 5000);
+  }
+  window.hidePrompt = function() {
+    document.getElementById('dialogPrompt').classList.remove('visible');
+  };
+
+  // ---------- 监听父窗口消息 ----------
+  window.LibPanel.onParentMessage({
+    [window.LibPanel.MSG_FROM_PARENT.REFRESH]: () => {
+      // 父窗口请求刷新
+    },
+    [window.LibPanel.MSG_FROM_PARENT.NAV_UPDATE]: (payload) => {
+      // 父窗口更新导航高亮
+      if (payload && payload.activeId) {
+        activeId = payload.activeId;
+        renderNav();
+      }
+    },
+  });
+
+  // ---------- 初始化 ----------
+  renderNav();
+})();
+</script>
+</body>
+</html>

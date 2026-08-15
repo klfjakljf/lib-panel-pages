@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人信息面板</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div class="panel-container" id="container">
+
+  <!-- 账号状态 -->
+  <div class="panel-section">
+    <div class="panel-section-title">账号</div>
+    <div class="card" id="accountCard">
+      <div class="skeleton-line" style="width:60%;height:14px;margin-bottom:8px;"></div>
+      <div class="skeleton-line" style="width:90%;height:12px;margin-bottom:6px;"></div>
+      <div class="skeleton-line" style="width:70%;height:12px;"></div>
+    </div>
+  </div>
+
+  <!-- 我的预约（后端无独立API，引导对话查询） -->
+  <div class="panel-section">
+    <div class="panel-section-title">我的预约</div>
+    <div id="reservationList">
+      <div class="card js-reservation-trigger" style="cursor:pointer;">
+        <div class="empty-state">
+          <span id="reservationIcon"></span>
+          <div>点击查看我的预约</div>
+          <div style="margin-top:4px;font-size:11px;">在对话框输入「我的预约」</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 定时任务 -->
+  <div class="panel-section">
+    <div class="panel-section-title">定时任务</div>
+    <div id="taskList">
+      <div class="skeleton-line" style="width:60%;height:14px;margin-bottom:8px;"></div>
+      <div class="skeleton-line" style="width:90%;height:12px;margin-bottom:6px;"></div>
+      <div class="skeleton-line" style="width:70%;height:12px;"></div>
+    </div>
+  </div>
+
+  <!-- 通知提示 -->
+  <div class="panel-section">
+    <div class="panel-section-title">通知</div>
+    <div class="card">
+      <div class="alert alert-info" id="nextRunAlert" style="margin-bottom: 8px; display:none;">
+        <span id="nextRunIcon"></span>
+        <div>
+          <div style="font-weight:600;">下次自动抢座</div>
+          <div id="nextRunText" style="opacity:0.8;">--</div>
+        </div>
+      </div>
+      <div class="list-item">
+        <span class="list-item-label">通知方式</span>
+        <span class="list-item-value">微信推送</span>
+      </div>
+      <div class="list-item">
+        <span class="list-item-label">抢座时间</span>
+        <span class="list-item-value">每日 06:15</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="shared.js"></script>
+<script>
+(function() {
+  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage } = window.LibPanel;
+
+  // ---------- 渲染账号状态 ----------
+  // 后端 GET /api/status 返回：
+  //   未绑定: {"code":0, "bound":false}
+  //   已绑定: {"code":0, "bound":true, "maskedName":"张某某"}
+  function renderAccount(resp) {
+    const card = document.getElementById('accountCard');
+
+    // API 调用失败
+    if (!resp) {
+      card.innerHTML = `
+        <div class="card-header">${ICONS.user} 账号状态</div>
+        <div class="alert alert-warning">
+          <span>${ICONS.alert}</span>
+          <div>无法连接服务器，请稍后重试</div>
+        </div>`;
+      return;
+    }
+
+    // code 非 0
+    if (resp.code !== 0) {
+      card.innerHTML = `
+        <div class="card-header">${ICONS.user} 账号状态</div>
+        <div class="alert alert-warning">
+          <span>${ICONS.alert}</span>
+          <div>${escapeHtml(resp.msg || '查询失败')}</div>
+        </div>`;
+      return;
+    }
+
+    // 未绑定
+    if (!resp.bound) {
+      card.innerHTML = `
+        <div class="card-header">${ICONS.user} 账号状态</div>
+        <div class="alert alert-warning">
+          <span>${ICONS.alert}</span>
+          <div>未绑定，请先在对话框输入「绑定账号」</div>
+        </div>`;
+      return;
+    }
+
+    // 已绑定（字段是 maskedName，不是 masked）
+    card.innerHTML = `
+      <div class="card-header">${ICONS.user} 账号状态</div>
+      <div class="list-item">
+        <span class="list-item-label">学号</span>
+        <span class="list-item-value">${escapeHtml(resp.maskedName || '--')}</span>
+      </div>
+      <div class="list-item">
+        <span class="list-item-label">状态</span>
+        <span class="list-item-value"><span class="badge badge-success">已绑定</span></span>
+      </div>`;
+  }
+
+  // ---------- 渲染定时任务 ----------
+  // 后端 GET /api/schedule?action=list 返回：
+  //   {"code":0, "tasks":[{"id":"abc123","kind":"seat_reserve","desc":"每周mon,tue,wed,thu,fri,sat,sun 06:15 抢约3C-008"}]}
+  // 注意：字段是 tasks 不是 jobs；任务只有 id/kind/desc
+  function renderTasks(resp) {
+    const container = document.getElementById('taskList');
+    const alertEl = document.getElementById('nextRunAlert');
+    const alertText = document.getElementById('nextRunText');
+    const alertIcon = document.getElementById('nextRunIcon');
+
+    // API 调用失败或未绑定
+    if (!resp || resp.code !== 0) {
+      alertEl.style.display = 'none';
+      const msg = resp ? (resp.msg || '查询失败') : '无法连接服务器';
+      // 401 = 未绑定，显示友好提示
+      if (resp && resp.code === 401) {
+        container.innerHTML = `
+          <div class="card">
+            <div class="empty-state">
+              ${ICONS.clock}
+              <div>请先绑定账号</div>
+            </div>
+          </div>`;
+      } else {
+        container.innerHTML = `
+          <div class="card">
+            <div class="alert alert-warning">
+              <span>${ICONS.alert}</span>
+              <div>${escapeHtml(msg)}</div>
+            </div>
+          </div>`;
+      }
+      return;
+    }
+
+    // 后端返回 tasks 数组
+    const tasks = resp.tasks || [];
+
+    // 更新下次执行提示
+    if (tasks.length > 0) {
+      alertEl.style.display = 'flex';
+      alertIcon.innerHTML = ICONS.clock;
+      alertText.textContent = `明日 06:15 自动执行（共 ${tasks.length} 个任务）`;
+    } else {
+      alertEl.style.display = 'none';
+    }
+
+    if (tasks.length === 0) {
+      container.innerHTML = `
+        <div class="card">
+          <div class="empty-state">
+            ${ICONS.clock}
+            <div>暂无定时任务</div>
+            <div style="margin-top:4px;">在对话框输入「定时抢座」创建</div>
+          </div>
+        </div>`;
+      return;
+    }
+
+    // 修复 P2-2：用更健壮的方式解析 desc，不再依赖单一正则
+    // 后端 desc 格式: "每周mon,tue,wed,thu,fri,sat,sun 06:15 抢约3C-008"
+    // 但格式可能变化，所以用多重降级策略
+    container.innerHTML = tasks.map(t => {
+      const desc = t.desc || '';
+      const kind = t.kind || '';
+
+      // 提取座位号（降级链：desc里的"抢约xxx" → kind → desc本身 → "未知"）
+      let seat = '未知';
+      const seatMatch = desc.match(/抢约\s*(\S+)/);
+      if (seatMatch) {
+        seat = seatMatch[1];
+      } else if (kind) {
+        seat = kind;
+      } else if (desc) {
+        seat = desc.substring(0, 20);
+      }
+
+      // 提取周期（降级链：完整匹配 → 缩写匹配 → 原文 → "已启用"）
+      let week = '已启用';
+      const weekFullMatch = desc.match(/每周([a-z,]+)/);
+      const weekAbbrMap = {
+        'mon,tue,wed,thu,fri,sat,sun': '每天',
+        'mon,tue,wed,thu,fri': '工作日',
+        'sat,sun': '周末',
+      };
+      if (weekFullMatch && weekAbbrMap[weekFullMatch[1]]) {
+        week = weekAbbrMap[weekFullMatch[1]];
+      } else if (weekFullMatch) {
+        week = '每周' + weekFullMatch[1].split(',').map(d => ({mon:'一',tue:'二',wed:'三',thu:'四',fri:'五',sat:'六',sun:'日'}[d] || d)).join('');
+      }
+
+      // 提取时间（降级链：HH:MM 匹配 → "06:15" 默认）
+      let time = '06:15';
+      const timeMatch = desc.match(/(\d{1,2}:\d{2})/);
+      if (timeMatch) time = timeMatch[1];
+
+      return `
+        <div class="task-card">
+          <div class="task-info">
+            <div class="task-name">${escapeHtml(seat)}</div>
+            <div class="task-meta">${escapeHtml(week)} · ${escapeHtml(time)}</div>
+          </div>
+          <span class="badge badge-success">启用</span>
+          <button class="btn btn-sm btn-danger js-cancel-task" data-task-id="${escapeHtml(t.id)}" title="取消任务">${ICONS.x}</button>
+        </div>
+      `;
+    }).join('');
+
+    // 修复 P1-5：用事件委托替代 onclick 注入，避免 XSS
+    container.querySelectorAll('.js-cancel-task').forEach(btn => {
+      btn.addEventListener('click', () => cancelTask(btn.dataset.taskId));
+    });
+  }
+
+  // ---------- 取消任务 ----------
+  // 后端 POST /api/schedule 用 "id" 字段（不是 "job_id"）
+  // 注意：生产环境 apiPost 会降级为对话引导，返回 code:302 redirected:true
+  window.cancelTask = async function(taskId) {
+    if (!confirm('确定取消这个定时任务吗？')) return;
+    try {
+      const resp = await apiPost('/api/schedule', { action: 'cancel', id: taskId });
+      // 检查是否被重定向到对话区（生产环境降级）
+      if (resp && resp.redirected) {
+        alert('已转向对话区，请在对话框完成取消操作');
+        return;
+      }
+      if (resp && resp.code === 0) {
+        sendToParent(MSG.DATA_SYNC, { type: 'task-cancelled', taskId });
+        await refreshAll();
+      } else {
+        alert('取消失败: ' + (resp ? resp.msg : '未知错误'));
+      }
+    } catch (e) {
+      alert('取消失败: ' + e.message);
+    }
+  };
+
+  // ---------- 查询我的预约（引导对话） ----------
+  window.askReservations = function() {
+    sendToParent(MSG.TRIGGER_TASK, { flow: 'chat', message: '我的预约' });
+  };
+
+  // ---------- 刷新所有数据 ----------
+  async function refreshAll() {
+    try {
+      // 并行请求状态和任务列表
+      // 注意：后端返回的就是 {"code":0,...}，不是嵌套在 data 里
+      const [statusResp, scheduleResp] = await Promise.allSettled([
+        apiGet('/api/status'),
+        apiGet('/api/schedule', { action: 'list' }),
+      ]);
+
+      const statusData = statusResp.status === 'fulfilled' ? statusResp.value : null;
+      const scheduleData = scheduleResp.status === 'fulfilled' ? scheduleResp.value : null;
+
+      // 直接传整个响应对象给渲染函数（不是 .data）
+      renderAccount(statusData);
+      renderTasks(scheduleData);
+    } catch (e) {
+      console.error('刷新失败:', e);
+      renderAccount(null);
+      renderTasks(null);
+    }
+  }
+
+  // ---------- 监听父窗口消息 ----------
+  onParentMessage({
+    [MSG_FROM_PARENT.REFRESH]: () => refreshAll(),
+    [MSG_FROM_PARENT.DATA_SYNC]: (payload) => {
+      if (payload && ['bound', 'unbound', 'reserved', 'task-created', 'task-cancelled'].includes(payload.type)) {
+        refreshAll();
+      }
+    },
+  });
+
+  // ---------- 初始化 ----------
+  // 设置预约区图标
+  document.getElementById('reservationIcon').innerHTML = ICONS.list;
+
+  // 修复 P1-5：reservation 用事件委托
+  document.querySelector('.js-reservation-trigger').addEventListener('click', () => askReservations());
+
+  refreshAll();
+
+  // 自动刷新策略：使用 Page Visibility API，仅在页面可见时刷新
+  // 避免用户切到其他页签时浪费 FC 调用次数
+  let refreshTimer = null;
+
+  function startAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(refreshAll, 60000);
+  }
+
+  function stopAutoRefresh() {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+  }
+
+  // 页面可见时开始刷新，隐藏时停止
+  if (document.hidden !== undefined) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopAutoRefresh();
+      } else {
+        // 重新可见时立即刷新一次，再启动定时器
+        refreshAll();
+        startAutoRefresh();
+      }
+    });
+  }
+
+  // 初始启动（如果页面可见）
+  if (!document.hidden) startAutoRefresh();
+})();
+</script>
+</body>
+</html>
