@@ -278,8 +278,15 @@
         apiGet('/api/schedule', { action: 'list' }),
       ]);
 
-      const statusData = statusResp.status === 'fulfilled' ? statusResp.value : null;
-      const scheduleData = scheduleResp.status === 'fulfilled' ? scheduleResp.value : null;
+      // 修复 P1-2：rejected 时把错误信息包装成 {code:-1, msg} 传给渲染函数，
+      // 让用户看到具体原因（如「403：签名或 Token 校验失败（uid=test_user, token_len=0）」）
+      // 而不是误导性的「无法连接服务器」
+      const statusData = statusResp.status === 'fulfilled'
+        ? statusResp.value
+        : { code: -1, msg: (statusResp.reason && statusResp.reason.message) || '网络错误' };
+      const scheduleData = scheduleResp.status === 'fulfilled'
+        ? scheduleResp.value
+        : { code: -1, msg: (scheduleResp.reason && scheduleResp.reason.message) || '网络错误' };
 
       // 直接传整个响应对象给渲染函数（不是 .data）
       renderAccount(statusData);

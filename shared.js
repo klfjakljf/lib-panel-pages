@@ -17,6 +17,9 @@
   const BOT_MSG = params.get('bot_msg') || '';
   const BOT_CONVERSATION = params.get('bot_conversation') || '';
 
+  // 用户级 Token（方案 E：超星 iframe 未注入签名时使用）
+  const TOKEN = params.get('token') || '';
+
   // 超星官方白名单域名（必须在 CONFIG 之前定义，因为 getCxOrigin 会用到）
   const CX_DOMAINS = [
     'https://robot.chaoxing.com',
@@ -26,6 +29,8 @@
     'https://robot-lc.chaoxing.com',
     'https://robot-lc1.chaoxing.com',
     'https://robot-lc2.chaoxing.com',
+    // 学校自建超星平台
+    'https://myagent.gzhu.edu.cn',
   ];
 
   // ---------- 配置 ----------
@@ -33,11 +38,38 @@
     API_BASE: getApiBase(),
     // 超星平台 origin：优先用 bot_referer（超星自动注入），其次硬编码白名单
     CX_ORIGIN: getCxOrigin(),
-    // 是否跳过签名（开发环境）
-    DEV_SKIP_SIGN: params.get('skip_sign') === '1' || !BOT_SIGNATURE,
+    // 是否跳过签名：仅限开发环境显式传 skip_sign=1 时生效
+    // 修复 P0-2：「无签名」不等于「开发模式」——生产环境超星本来就不注入签名，
+    // 原来的 `|| !BOT_SIGNATURE` 会让生产环境恒为 true，POST 误走直连分支必然 403
+    DEV_SKIP_SIGN: params.get('skip_sign') === '1',
     // 是否本地开发环境
     IS_DEV: isDevEnv(),
+    // 是否持有直连 FC 的凭证（签名或 token 任一）——决定 POST 能否直连
+    HAS_CREDENTIAL: Boolean(BOT_SIGNATURE || TOKEN),
   };
+
+  // ---------- 调试日志：启动时打印所有 URL 参数（验证超星自动注入） ----------
+  // 上线后可保留，仅 console 不影响业务逻辑
+  console.log('[LibPanel] ====== iframe URL 参数诊断 ======');
+  console.log('[LibPanel] location.href:', global.location.href);
+  console.log('[LibPanel] location.search:', global.location.search);
+  console.log('[LibPanel] document.referrer:', global.document.referrer);
+  console.log('[LibPanel] 所有 URL 参数:');
+  for (const [k, v] of params.entries()) {
+    console.log(`[LibPanel]   ${k} = ${v}`);
+  }
+  console.log('[LibPanel] 解析后:');
+  console.log('  UID:', UID);
+  console.log('  BOT_SIGNATURE:', BOT_SIGNATURE ? `${BOT_SIGNATURE.slice(0, 8)}...(${BOT_SIGNATURE.length}字符)` : '(空)');
+  console.log('  ROBOT_TIME:', ROBOT_TIME);
+  console.log('  ROBOT_ID:', ROBOT_ID);
+  console.log('  BOT_MSG:', BOT_MSG);
+  console.log('  BOT_CONVERSATION:', BOT_CONVERSATION);
+  console.log('  TOKEN:', TOKEN ? `${TOKEN.slice(0, 8)}...(${TOKEN.length}字符)` : '(空)');
+  console.log('  CX_ORIGIN:', CONFIG.CX_ORIGIN);
+  console.log('  API_BASE:', CONFIG.API_BASE);
+  console.log('  DEV_SKIP_SIGN:', CONFIG.DEV_SKIP_SIGN);
+  console.log('[LibPanel] ====== 诊断结束 ======');
 
   function getApiBase() {
     const base = params.get('api_base');
@@ -72,11 +104,12 @@
       return '*';
     }
 
-    // 4. 生产环境兜底：尝试所有超星域名（最不靠谱，但比硬编码单一域名好）
-    // 注意：postMessage 的 targetOrigin 不支持数组，只能猜一个
-    // 官方文档说会注入 bot_referer，正常情况不会走到这里
-    console.error('[LibPanel] 无法确定超星 origin，bot_referer 未注入且 referrer 不可用');
-    return CX_DOMAINS[0];  // 兜底用主域名
+    // 4. 生产环境兜底：学校自建平台是当前实际部署环境（实测不注入 bot_referer）
+    // 注意：postMessage 的 targetOrigin 不支持数组，只能选实际部署的父窗口域名
+    // 修复 P0-1：原兜底 robot.chaoxing.com 与真实父窗口 myagent.gzhu.edu.cn 不匹配，
+    // 浏览器会静默丢弃所有 CXBOT 消息（不报错），导致 triggerTask/alertUser 全部失效
+    console.error('[LibPanel] 无法确定超星 origin，bot_referer 未注入且 referrer 不可用，兜底使用学校自建平台');
+    return 'https://myagent.gzhu.edu.cn';
   }
 
   function isDevEnv() {
@@ -372,6 +405,8 @@
   async function apiGet(path, query = {}) {
     const url = new URL(CONFIG.API_BASE + path, global.location.origin);
     url.searchParams.set('uid', UID);
+    // Token 兜底鉴权（方案 E：超星未注入签名时使用）
+    if (TOKEN) url.searchParams.set('token', TOKEN);
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
@@ -381,6 +416,12 @@
       headers['X-Robot-Signature'] = BOT_SIGNATURE;
     }
 
+    // 调试日志：打印请求信息（上线后可保留）
+    console.log(`[LibPanel] apiGet → ${path}`);
+    console.log('  URL:', url.toString());
+    console.log('  DEV_SKIP_SIGN:', CONFIG.DEV_SKIP_SIGN);
+    console.log('  Headers:', headers);
+
     // 8 秒超时（FC 冷启动最长约 5 秒，留 3 秒余量）
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -388,10 +429,28 @@
     try {
       const resp = await fetch(url.toString(), { headers, signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!resp.ok) throw new Error(`API ${path} 返回 ${resp.status}`);
-      return resp.json();
+      console.log(`[LibPanel] apiGet ← ${path} status=${resp.status}`);
+      if (!resp.ok) {
+        // 修复 P1-2：读取错误响应体，透出 FC 精心构造的 msg/debug 字段
+        // （如 403 时的 uid、token_len、query_keys），不再丢弃排障信息
+        let errData = null;
+        try { errData = await resp.json(); } catch (e) { /* 响应体非 JSON，忽略 */ }
+        console.error(`[LibPanel] apiGet ${path} ${resp.status} 错误响应体:`, errData);
+        const detail = errData && errData.msg ? `：${errData.msg}` : '';
+        const debug = errData && errData.debug
+          ? `（uid=${errData.debug.uid ?? '?'}, token_len=${errData.debug.token_len ?? '?'}）`
+          : '';
+        const err = new Error(`API ${path} 返回 ${resp.status}${detail}${debug}`);
+        err.status = resp.status;
+        err.data = errData;  // 挂载完整响应体，供调用方细粒度处理
+        throw err;
+      }
+      const data = await resp.json();
+      console.log(`[LibPanel] apiGet 响应体:`, data);
+      return data;
     } catch (e) {
       clearTimeout(timeoutId);
+      console.error(`[LibPanel] apiGet 失败 ${path}:`, e);
       if (e.name === 'AbortError') throw new Error(`API ${path} 请求超时（8秒）`);
       throw e;
     }
@@ -399,25 +458,37 @@
 
   /**
    * 调用 FC API（POST 写操作）
-   * ⚠️ 超星 iframe 不直接 POST，写操作有两种方式：
-   *   1. 开发环境（DEV_SKIP_SIGN）：直接 fetch
-   *   2. 生产环境：降级为 CXBOT:send 触发对话操作（修复 P0-3）
-   *      iframe 不直接 POST，改为提示用户在对话区操作
+   * 直连条件（满足其一即可直接 fetch）：
+   *   1. 开发环境：显式 skip_sign=1 或本地 localhost
+   *   2. 持有凭证：URL 带 token（或签名）——FC 端有对应校验可放行
+   * 生产环境且无任何凭证时：降级为 CXBOT:send 对话引导（直连必然 403）
+   * 修复 P0-2：原实现误用「无签名」判断开发模式，生产环境恒走直连分支
    */
   async function apiPost(path, body = {}) {
-    if (CONFIG.DEV_SKIP_SIGN) {
+    if (CONFIG.DEV_SKIP_SIGN || CONFIG.IS_DEV || CONFIG.HAS_CREDENTIAL) {
       const url = CONFIG.API_BASE + path;
+      const headers = { 'Content-Type': 'application/json' };
+      if (BOT_SIGNATURE) headers['X-Robot-Signature'] = BOT_SIGNATURE;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       try {
         const resp = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, uid: UID }),
+          headers,
+          body: JSON.stringify({ ...body, uid: UID, ...(TOKEN ? { token: TOKEN } : {}) }),
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
-        if (!resp.ok) throw new Error(`API ${path} 返回 ${resp.status}`);
+        if (!resp.ok) {
+          // 与 apiGet 一致：读取错误响应体，透出 FC 的 msg/debug 信息
+          let errData = null;
+          try { errData = await resp.json(); } catch (e) { /* 响应体非 JSON，忽略 */ }
+          const detail = errData && errData.msg ? `：${errData.msg}` : '';
+          const err = new Error(`API ${path} 返回 ${resp.status}${detail}`);
+          err.status = resp.status;
+          err.data = errData;
+          throw err;
+        }
         return resp.json();
       } catch (e) {
         clearTimeout(timeoutId);
@@ -426,8 +497,8 @@
       }
     }
 
-    // 生产环境：iframe 不直接 POST，降级为对话引导
-    console.warn('[LibPanel] 生产环境 POST 降级为 CXBOT 对话引导:', path);
+    // 生产环境且无凭证：iframe 不直接 POST，降级为对话引导
+    console.warn('[LibPanel] 生产环境无凭证，POST 降级为 CXBOT 对话引导:', path);
     // 根据路径推断意图文本
     const intentMap = {
       '/api/schedule': '取消定时任务',
@@ -611,6 +682,7 @@
     ROBOT_ID,
     BOT_MSG,
     BOT_CONVERSATION,
+    TOKEN,
     CONFIG,
     // CXBOT 官方协议（新 API，推荐使用）
     CXBOT,
@@ -643,6 +715,89 @@
     NAV_CONFIG,
     // 图标
     ICONS,
+    // 测试工具（Console 调用，便于验证签名机制）
+    debug: {
+      // 测试 1：从 iframe 内 fetch FC 测试接口，看返回的 X-Robot-Signature 头部
+      // 用法：在 DevTools Console 执行 LibPanel.debug.testSignature()
+      async testSignature() {
+        const url = CONFIG.API_BASE + '/api/test/signature?uid=' + UID;
+        console.log('[LibPanel.Debug] 测试 1：调用 FC /api/test/signature');
+        console.log('  URL:', url);
+        console.log('  BOT_SIGNATURE:', BOT_SIGNATURE);
+        console.log('  DEV_SKIP_SIGN:', CONFIG.DEV_SKIP_SIGN);
+        try {
+          const headers = {};
+          if (!CONFIG.DEV_SKIP_SIGN && BOT_SIGNATURE) {
+            headers['X-Robot-Signature'] = BOT_SIGNATURE;
+          }
+          const resp = await fetch(url, { headers });
+          const data = await resp.json();
+          console.log('[LibPanel.Debug] ====== 测试结果 ======');
+          console.log('  状态码:', resp.status);
+          console.log('  超星注入的 X- 头部:', data.received?.x_headers);
+          console.log('  来源 IP:', data.received?.remote_ip);
+          console.log('  完整响应:', data);
+          console.log('[LibPanel.Debug] ====== 结束 ======');
+          console.log('  结论判断：');
+          console.log('    - 若 x_headers 含 X-Robot-Signature → 超星自动注入签名给 iframe fetch');
+          console.log('    - 若 x_headers 为空或不含 → iframe 路径无自动签名，需走 CXBOT 对话引导');
+          return data;
+        } catch (e) {
+          console.error('[LibPanel.Debug] 测试失败:', e);
+          throw e;
+        }
+      },
+
+      // 测试 2：向超星发 CXBOT 消息，验证协议可达性
+      // 用法：LibPanel.debug.testCxbot()
+      testCxbot(message = '测试 CXBOT 协议') {
+        console.log('[LibPanel.Debug] 测试 2：向超星发 CXBOT:send');
+        console.log('  targetOrigin:', CONFIG.CX_ORIGIN);
+        console.log('  消息:', message);
+        return sendToChat(message, { hidden: false });
+      },
+
+      // 测试 3：打印当前 iframe 收到的所有 URL 参数
+      // 用法：LibPanel.debug.dumpParams()
+      dumpParams() {
+        console.log('[LibPanel.Debug] ====== iframe URL 参数 ======');
+        console.log('  location.href:', global.location.href);
+        console.log('  location.search:', global.location.search);
+        console.log('  document.referrer:', global.document.referrer);
+        for (const [k, v] of params.entries()) {
+          console.log(`  ${k} = ${v}`);
+        }
+        console.log('[LibPanel.Debug] ====== 结束 ======');
+        return {
+          uid: UID,
+          bot_signature: BOT_SIGNATURE,
+          robotTime: ROBOT_TIME,
+          robotId: ROBOT_ID,
+          bot_msg: BOT_MSG,
+          bot_conversation: BOT_CONVERSATION,
+          cx_origin: CONFIG.CX_ORIGIN,
+          api_base: CONFIG.API_BASE,
+          dev_skip_sign: CONFIG.DEV_SKIP_SIGN,
+          all_params: Object.fromEntries(params.entries()),
+        };
+      },
+
+      // 测试 4：从 iframe 内 fetch FC /health，验证基础连通性
+      async testHealth() {
+        const url = CONFIG.API_BASE + '/health';
+        console.log('[LibPanel.Debug] 测试 4：fetch FC /health');
+        console.log('  URL:', url);
+        try {
+          const resp = await fetch(url);
+          const data = await resp.json();
+          console.log('[LibPanel.Debug] /health 返回:', resp.status, data);
+          return data;
+        } catch (e) {
+          console.error('[LibPanel.Debug] /health 失败:', e);
+          throw e;
+        }
+      },
+    },
   };
 
   // 加载完成通知（超星无对应响应，但保留日志便于调试）
