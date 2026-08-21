@@ -9,7 +9,8 @@
 
   // ---------- URL 参数解析 ----------
   const params = new URLSearchParams(global.location.search);
-  const UID = params.get('uid') || params.get('robotId') || 'test_user';
+  // ⚠️ robotId 是机器人 ID（INNER_robotId）不是用户 ID，不可作 uid 兜底（8-21 移除）
+  const UID = params.get('uid') || 'test_user';
   const BOT_SIGNATURE = params.get('bot_signature') || '';
   const ROBOT_TIME = params.get('robotTime') || '';
   const ROBOT_ID = params.get('robotId') || '';
