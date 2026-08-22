@@ -19,7 +19,18 @@
   const BOT_CONVERSATION = params.get('bot_conversation') || '';
 
   // 用户级 Token（方案 E：超星 iframe 未注入签名时使用）
-  const TOKEN = params.get('token') || '';
+  // let 而非 const：方案 4 内嵌绑定表单绑定成功后经 setToken() 原地更新，免刷新页面
+  // 持久化：URL 参数优先，其次 localStorage（超星 iframe URL 无法注入按用户定制的
+  // token——平台变量只有 {{INNER_userId}}，绑定成功后存本浏览器，下次打开免重复绑定；
+  // 暴露面与 URL 参数相当，且不进代理/服务器日志，整体不劣于原方案）
+  const TOKEN_STORAGE_KEY = 'libpanel_token_' + (params.get('uid') || 'test_user');
+
+  function _loadStoredToken() {
+    try { return global.localStorage.getItem(TOKEN_STORAGE_KEY) || ''; }
+    catch (e) { return ''; }  // 隐私模式等场景 localStorage 不可用
+  }
+
+  let TOKEN = params.get('token') || _loadStoredToken();
 
   // 超星官方白名单域名（必须在 CONFIG 之前定义，因为 getCxOrigin 会用到）
   const CX_DOMAINS = [
@@ -395,19 +406,105 @@
   }
 
   // ============================================================
-  // API 客户端（与 CXBOT 协议无关，保留原实现）
+  // 短时效凭证管理（方案 5：长期 token 换 5 分钟 JWT，业务请求不携带长期 token）
+  // ============================================================
+
+  // 内存缓存（刻意不落 localStorage：随页面关闭即失效，进一步缩小泄漏窗口）
+  let _stToken = '';
+  let _stTokenExpireAt = 0;    // 过期毫秒时间戳
+  let _stTokenPromise = null;  // 并发去重：多个请求同时发现凭证过期时只发一次 exchange
+  const ST_REFRESH_MARGIN_MS = 30 * 1000;  // 提前 30 秒视为过期，规避边界竞态
+
+  /**
+   * 获取短时效凭证（st_token）：
+   * - 持有长期 token 时自动调 /api/auth/exchange 换取 JWT（默认 5 分钟有效）
+   * - 有效期内直接用内存缓存；并发调用共享同一个 exchange 请求
+   * - 换取失败（长期 token 失效 / FC 未部署新端点）返回 ''，调用方回落携带长期 token
+   * - 未绑定（无长期 token）返回 ''，走签名/对话引导链路
+   * @param {boolean} force - 忽略缓存强制换取（403 过期重试时用）
+   */
+  async function getStToken(force = false) {
+    if (!TOKEN) return '';
+    if (!force && _stToken && _stTokenExpireAt - ST_REFRESH_MARGIN_MS > Date.now()) {
+      return _stToken;
+    }
+    if (_stTokenPromise) return _stTokenPromise;
+
+    _stTokenPromise = (async () => {
+      try {
+        const url = new URL(CONFIG.API_BASE + '/api/auth/exchange', global.location.origin);
+        url.searchParams.set('uid', UID);
+        url.searchParams.set('token', TOKEN);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const resp = await fetch(url.toString(), { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.code === 0 && data.st_token) {
+          _stToken = data.st_token;
+          _stTokenExpireAt = Date.now() + (data.expires_in || 300) * 1000;
+          console.log('[LibPanel] 短时效凭证签发成功，有效期', data.expires_in, '秒');
+          return _stToken;
+        }
+        // 换取失败：清缓存返回空串，本次请求回落携带长期 token（旧链路兼容）
+        console.warn('[LibPanel] 短时效凭证签发失败，回落长期 token:', resp.status, data.msg || '');
+        _stToken = '';
+        _stTokenExpireAt = 0;
+        return '';
+      } catch (e) {
+        console.warn('[LibPanel] exchange 请求失败，回落长期 token:', e.message);
+        _stToken = '';
+        _stTokenExpireAt = 0;
+        return '';
+      } finally {
+        _stTokenPromise = null;
+      }
+    })();
+    return _stTokenPromise;
+  }
+
+  /**
+   * 更新长期 token（方案 4：内嵌绑定表单绑定成功后调用，免刷新页面立即可用）
+   * 同时清空短时效凭证缓存（下次请求自动用新 token 重新换取）并持久化到 localStorage
+   */
+  function setToken(newToken) {
+    TOKEN = newToken || '';
+    CONFIG.HAS_CREDENTIAL = Boolean(BOT_SIGNATURE || TOKEN);
+    _stToken = '';
+    _stTokenExpireAt = 0;
+    try {
+      if (TOKEN) global.localStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
+      else global.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    } catch (e) { /* localStorage 不可用时跳过持久化（仅影响下次会话） */ }
+    console.log('[LibPanel] 长期 token 已更新，短时效凭证缓存已清空');
+  }
+
+  /** 清空凭证（解绑后调用）：后续请求回落无凭证链路（GET 裸查 / POST 对话引导） */
+  function clearToken() {
+    setToken('');
+  }
+
+  // ============================================================
+  // API 客户端（与 CXBOT 协议无关）
   // ============================================================
 
   /**
    * 调用 FC API（GET 只读接口）
    * 生产环境用 bot_signature 签名，开发环境跳过
    * 修复 P1-2：加 8 秒超时，防止 FC 冷启动时面板卡死
+   * 方案 5：优先携带短时效凭证 st_token（长期 token 不出现在业务 URL）；
+   * exchange 不可用时回落携带长期 token（兼容旧版 FC）
    */
-  async function apiGet(path, query = {}) {
+  async function apiGet(path, query = {}, _retried = false) {
+    const stToken = await getStToken();
     const url = new URL(CONFIG.API_BASE + path, global.location.origin);
     url.searchParams.set('uid', UID);
-    // Token 兜底鉴权（方案 E：超星未注入签名时使用）
-    if (TOKEN) url.searchParams.set('token', TOKEN);
+    if (stToken) {
+      url.searchParams.set('st_token', stToken);
+    } else if (TOKEN) {
+      // 回落：长期 token 兜底鉴权（方案 E：超星未注入签名时使用）
+      url.searchParams.set('token', TOKEN);
+    }
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
@@ -420,7 +517,7 @@
     // 调试日志：打印请求信息（上线后可保留）
     console.log(`[LibPanel] apiGet → ${path}`);
     console.log('  URL:', url.toString());
-    console.log('  DEV_SKIP_SIGN:', CONFIG.DEV_SKIP_SIGN);
+    console.log('  凭证:', stToken ? 'st_token(短时效)' : (TOKEN ? 'token(长期)' : '无'));
     console.log('  Headers:', headers);
 
     // 8 秒超时（FC 冷启动最长约 5 秒，留 3 秒余量）
@@ -431,6 +528,12 @@
       const resp = await fetch(url.toString(), { headers, signal: controller.signal });
       clearTimeout(timeoutId);
       console.log(`[LibPanel] apiGet ← ${path} status=${resp.status}`);
+      // 短时效凭证过期（页面停留超有效期）：强制换取新凭证重试一次
+      if (resp.status === 403 && stToken && !_retried) {
+        console.warn('[LibPanel] st_token 疑似过期，强制刷新后重试:', path);
+        const fresh = await getStToken(true);
+        if (fresh) return apiGet(path, query, true);
+      }
       if (!resp.ok) {
         // 修复 P1-2：读取错误响应体，透出 FC 精心构造的 msg/debug 字段
         // （如 403 时的 uid、token_len、query_keys），不再丢弃排障信息
@@ -457,16 +560,27 @@
     }
   }
 
+  // FC 鉴权白名单端点：无需任何凭证即可直连（绑定时用户必然尚无 token，
+  // 若走「无凭证降级对话引导」逻辑，方案 4 内嵌表单在生产环境永远无法直连提交）
+  const NO_CREDENTIAL_PATHS = ['/api/bind'];
+
   /**
    * 调用 FC API（POST 写操作）
    * 直连条件（满足其一即可直接 fetch）：
-   *   1. 开发环境：显式 skip_sign=1 或本地 localhost
-   *   2. 持有凭证：URL 带 token（或签名）——FC 端有对应校验可放行
+   *   1. 白名单端点：/api/bind（FC 侧免鉴权，安全由图书馆账号验证 + 限流保障）
+   *   2. 开发环境：显式 skip_sign=1 或本地 localhost
+   *   3. 持有凭证：URL 带 token（或签名）——FC 端有对应校验可放行
    * 生产环境且无任何凭证时：降级为 CXBOT:send 对话引导（直连必然 403）
    * 修复 P0-2：原实现误用「无签名」判断开发模式，生产环境恒走直连分支
+   * 方案 5：凭证优先级 st_token > token；exchange 不可用时回落长期 token
    */
-  async function apiPost(path, body = {}) {
-    if (CONFIG.DEV_SKIP_SIGN || CONFIG.IS_DEV || CONFIG.HAS_CREDENTIAL) {
+  async function apiPost(path, body = {}, _retried = false) {
+    const noCred = NO_CREDENTIAL_PATHS.includes(path);
+    if (noCred || CONFIG.DEV_SKIP_SIGN || CONFIG.IS_DEV || CONFIG.HAS_CREDENTIAL) {
+      const stToken = noCred ? '' : await getStToken();
+      const credential = noCred
+        ? {}
+        : (stToken ? { st_token: stToken } : (TOKEN ? { token: TOKEN } : {}));
       const url = CONFIG.API_BASE + path;
       const headers = { 'Content-Type': 'application/json' };
       if (BOT_SIGNATURE) headers['X-Robot-Signature'] = BOT_SIGNATURE;
@@ -476,10 +590,16 @@
         const resp = await fetch(url, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ ...body, uid: UID, ...(TOKEN ? { token: TOKEN } : {}) }),
+          body: JSON.stringify({ ...body, uid: UID, ...credential }),
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
+        // 短时效凭证过期（页面停留超有效期）：强制换取新凭证重试一次
+        if (resp.status === 403 && stToken && !_retried) {
+          console.warn('[LibPanel] st_token 疑似过期，强制刷新后重试:', path);
+          const fresh = await getStToken(true);
+          if (fresh) return apiPost(path, body, true);
+        }
         if (!resp.ok) {
           // 与 apiGet 一致：读取错误响应体，透出 FC 的 msg/debug 信息
           let errData = null;
@@ -683,6 +803,8 @@
     ROBOT_ID,
     BOT_MSG,
     BOT_CONVERSATION,
+    // 注意：TOKEN 导出的是初始值快照（仅调试用）；
+    // setToken() 后的最新值请通过后续 API 调用隐式使用，勿读此字段判断
     TOKEN,
     CONFIG,
     // CXBOT 官方协议（新 API，推荐使用）
@@ -706,6 +828,10 @@
     // API 客户端
     apiGet,
     apiPost,
+    // 凭证管理（方案 4/5：绑定成功后 setToken 免刷新；getStToken 供调试）
+    setToken,
+    clearToken,
+    getStToken,
     // 工具
     formatPeriod,
     formatDate,

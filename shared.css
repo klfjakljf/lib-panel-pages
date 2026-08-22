@@ -168,6 +168,68 @@ html, body {
 .badge-info    { background: var(--color-primary-light); color: #1E40AF; }
 .badge-muted   { background: var(--color-border-light);  color: var(--color-text-secondary); }
 
+/* ---------- 通用组件：表单（方案 4 内嵌绑定表单） ---------- */
+.form-field { margin-bottom: 10px; }
+.form-label {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+.form-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-family: inherit;
+  min-height: 34px;
+  transition: border-color var(--transition);
+}
+.form-input:focus { outline: none; border-color: var(--color-primary); }
+.form-input::placeholder { color: var(--color-text-muted); }
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.form-check input[type="checkbox"] { accent-color: var(--color-primary); cursor: pointer; }
+.form-msg { font-size: var(--text-sm); margin-top: 8px; word-break: break-all; }
+.form-msg-error { color: var(--color-danger); }
+.form-footnote {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+  margin-top: 10px;
+  text-align: center;
+}
+.token-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.token-value {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- 通用组件：列表项 ---------- */
 .list-item {
   display: flex;

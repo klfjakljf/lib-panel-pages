@@ -71,7 +71,7 @@
 <script src="shared.js"></script>
 <script>
 (function() {
-  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage } = window.LibPanel;
+  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage, setToken, clearToken } = window.LibPanel;
 
   // ---------- 渲染账号状态 ----------
   // 后端 GET /api/status 返回：
@@ -102,14 +102,38 @@
       return;
     }
 
-    // 未绑定
+    // 未绑定（方案 4：内嵌绑定表单，免跳转对话框直接绑定）
     if (!resp.bound) {
       card.innerHTML = `
         <div class="card-header">${ICONS.user} 账号状态</div>
-        <div class="alert alert-warning">
+        <div class="alert alert-warning" style="margin-bottom:10px;">
           <span>${ICONS.alert}</span>
-          <div>未绑定，请先在对话框输入「绑定账号」</div>
-        </div>`;
+          <div>未绑定图书馆账号，在下方表单直接绑定</div>
+        </div>
+        <form id="bindForm" autocomplete="off" novalidate>
+          <div class="form-field">
+            <label class="form-label" for="bindUsername">学号</label>
+            <input class="form-input" id="bindUsername" type="text" inputmode="numeric"
+                   placeholder="图书馆系统登录学号" autocomplete="off" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="bindPassword">密码</label>
+            <input class="form-input" id="bindPassword" type="password"
+                   placeholder="图书馆系统密码" autocomplete="new-password" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="bindPushplus">PushPlus Token（可选）</label>
+            <input class="form-input" id="bindPushplus" type="text"
+                   placeholder="抢座结果微信推送用，可留空" autocomplete="off">
+          </div>
+          <label class="form-check" style="margin-bottom:10px;">
+            <input type="checkbox" id="bindRemember"> 记住密码（AES 加密存储，每日自动抢座需要）
+          </label>
+          <button type="submit" class="btn btn-primary btn-block" id="bindSubmitBtn">绑定</button>
+          <div class="form-msg" id="bindMsg"></div>
+        </form>
+        <div class="form-footnote">或在对话框输入「绑定账号」走对话流程</div>`;
+      setupBindForm(card);
       return;
     }
 
@@ -123,7 +147,110 @@
       <div class="list-item">
         <span class="list-item-label">状态</span>
         <span class="list-item-value"><span class="badge badge-success">已绑定</span></span>
-      </div>`;
+      </div>
+      <button class="btn btn-block js-unbind" style="margin-top:10px;">解绑账号</button>`;
+    card.querySelector('.js-unbind').addEventListener('click', unbindAccount);
+  }
+
+  // ---------- 内嵌绑定表单（方案 4：免跳转对话框，绑定成功免刷新直接用） ----------
+  function setupBindForm(card) {
+    const form = card.querySelector('#bindForm');
+    const msgEl = card.querySelector('#bindMsg');
+    const btn = card.querySelector('#bindSubmitBtn');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msgEl.textContent = '';
+      msgEl.className = 'form-msg';
+      const username = card.querySelector('#bindUsername').value.trim();
+      const password = card.querySelector('#bindPassword').value;
+      const pushplus = card.querySelector('#bindPushplus').value.trim();
+      const remember = card.querySelector('#bindRemember').checked;
+      if (!username || !password) {
+        msgEl.textContent = '请填写学号和密码';
+        msgEl.classList.add('form-msg-error');
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '验证中…';
+      try {
+        const resp = await apiPost('/api/bind', {
+          uid: window.LibPanel.UID, username, password, remember, pushplus,
+        });
+        if (resp && resp.redirected) {
+          // 兜底（/api/bind 已在 shared.js 直连白名单中，正常不会走到）
+          msgEl.textContent = '当前环境不支持直连，请在对话框输入「绑定账号」';
+          msgEl.classList.add('form-msg-error');
+          return;
+        }
+        if (resp && resp.code === 0) {
+          // token 生命周期起点：立即生效（内存 + localStorage 持久化），
+          // 后续请求自动经 /api/auth/exchange 换短时效凭证，无需刷新页面
+          setToken(resp.token || '');
+          renderBindSuccess(card, resp);
+        } else {
+          msgEl.textContent = (resp && resp.msg) || '绑定失败';
+          msgEl.classList.add('form-msg-error');
+        }
+      } catch (err) {
+        msgEl.textContent = err.message || '网络错误，请稍后重试';
+        msgEl.classList.add('form-msg-error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '绑定';
+      }
+    });
+  }
+
+  // ---------- 绑定成功页（展示 token 供跨设备配置 iframe URL） ----------
+  function renderBindSuccess(card, resp) {
+    const token = resp.token || '';
+    card.innerHTML = `
+      <div class="card-header">${ICONS.user} 账号状态</div>
+      <div class="alert alert-success">
+        <span>${ICONS.check}</span>
+        <div>绑定成功（${escapeHtml(resp.maskedName || '')}），凭证已自动生效</div>
+      </div>
+      <div style="margin-top:10px;font-size:var(--text-sm);color:var(--color-text-secondary);">
+        凭证已保存在本浏览器，下次打开免重复绑定。若需在其他设备使用，
+        请将下方 Token 配置到超星智能体 iframe URL 参数（&amp;token=…）：
+      </div>
+      <div class="token-box">
+        <span class="token-value" title="${escapeHtml(token)}">${escapeHtml(token)}</span>
+        <button class="btn btn-sm js-copy-token">复制</button>
+      </div>
+      <button class="btn btn-block" id="bindDoneBtn" style="margin-top:12px;">完成</button>`;
+    card.querySelector('.js-copy-token').addEventListener('click', async (e) => {
+      try {
+        await navigator.clipboard.writeText(token);
+        e.target.textContent = '已复制';
+        setTimeout(() => { e.target.textContent = '复制'; }, 1500);
+      } catch (err) {
+        alert('复制失败，请手动选择复制：' + token);
+      }
+    });
+    card.querySelector('#bindDoneBtn').addEventListener('click', async () => {
+      await refreshAll();
+    });
+  }
+
+  // ---------- 解绑（token 生命周期终点：清内存 + localStorage） ----------
+  async function unbindAccount() {
+    if (!confirm('确定解绑账号吗？解绑后定时抢座任务将停止。')) return;
+    try {
+      const resp = await apiPost('/api/unbind', { uid: window.LibPanel.UID });
+      if (resp && resp.redirected) {
+        alert('已转向对话区，请在对话框完成解绑操作');
+        return;
+      }
+      if (resp && resp.code === 0) {
+        clearToken();  // 清除本地长期凭证与短时效缓存，下次会话从零开始
+        await refreshAll();
+      } else {
+        alert('解绑失败: ' + (resp ? resp.msg : '未知错误'));
+      }
+    } catch (e) {
+      alert('解绑失败: ' + e.message);
+    }
   }
 
   // ---------- 渲染定时任务 ----------
