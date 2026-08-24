@@ -35,7 +35,12 @@
       return found;
     } catch (e) { return ''; }  // 隐私模式等 localStorage 不可用
   }
-  const UID = params.get('uid') || _bootstrapUid() || 'test_user';
+  // 未替换的平台模板（如常驻 iframe 配了 {{INNER_userId}} 但宿主不做变量替换，
+  // 字面量 "{{INNER_userId}}" 会被当成 uid 使用）视为无效——识别后走身份自举
+  const _rawUid = params.get('uid') || '';
+  const _uidIsTemplate = /\{\{[^}]*\}\}/.test(_rawUid);
+  const UID = (_rawUid && !_uidIsTemplate) ? _rawUid
+    : (_bootstrapUid() || _rawUid || 'test_user');
   const BOT_SIGNATURE = params.get('bot_signature') || '';
   const ROBOT_TIME = params.get('robotTime') || '';
   const ROBOT_ID = params.get('robotId') || '';

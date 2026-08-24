@@ -44,6 +44,16 @@
     </div>
   </div>
 
+  <!-- 信誉分 -->
+  <div class="panel-section">
+    <div class="panel-section-title">信誉分</div>
+    <div class="card" id="creditCard">
+      <div class="skeleton-line" style="width:60%;height:14px;margin-bottom:8px;"></div>
+      <div class="skeleton-line" style="width:90%;height:12px;margin-bottom:6px;"></div>
+      <div class="skeleton-line" style="width:70%;height:12px;"></div>
+    </div>
+  </div>
+
   <!-- 通知提示 -->
   <div class="panel-section">
     <div class="panel-section-title">通知</div>
@@ -310,6 +320,99 @@
     }
   }
 
+  // ---------- 渲染信誉分 ----------
+  // 后端 GET /api/credit?uid=xxx 返回：
+  //   {"code":0, "profile":{...}, "credit":{...}, "score":100, "violationCount":0, "violations":[...]}
+  function renderCredit(resp) {
+    const card = document.getElementById('creditCard');
+
+    if (!resp || resp.code !== 0) {
+      const msg = resp ? (resp.msg || '查询失败') : '无法获取';
+      if (resp && resp.code === 401) {
+        card.innerHTML = `
+          <div class="card-header">${ICONS.shield} 信誉分</div>
+          <div class="empty-state" style="padding:12px;">
+            ${ICONS.shield}
+            <div style="font-size:12px;">请先绑定账号</div>
+          </div>`;
+      } else {
+        card.innerHTML = `
+          <div class="card-header">${ICONS.shield} 信誉分</div>
+          <div class="alert alert-warning" style="font-size:12px;">
+            <span>${ICONS.alert}</span>
+            <div>${escapeHtml(msg)}</div>
+          </div>`;
+      }
+      return;
+    }
+
+    const score = resp.score;
+    const violationCount = resp.violationCount || 0;
+    const profile = resp.profile || {};
+    const violations = resp.violations || [];
+
+    // 信誉分颜色：100=绿色，<100=黄色，<80=红色
+    let scoreColor = '#22C55E';
+    let scoreLabel = '良好';
+    if (score !== null && score !== undefined) {
+      if (score < 80) { scoreColor = '#EF4444'; scoreLabel = '较低'; }
+      else if (score < 100) { scoreColor = '#F59E0B'; scoreLabel = '一般'; }
+    }
+
+    let html = `<div class="card-header">${ICONS.shield} 信誉分</div>`;
+
+    // 信誉分数值
+    if (score !== null && score !== undefined) {
+      html += `
+        <div class="list-item">
+          <span class="list-item-label">信誉分</span>
+          <span class="list-item-value" style="font-size:18px;font-weight:700;color:${scoreColor};">${escapeHtml(String(score))}</span>
+        </div>`;
+    } else {
+      html += `
+        <div class="list-item">
+          <span class="list-item-label">信誉分</span>
+          <span class="list-item-value" style="color:#999;">该系统未返回</span>
+        </div>`;
+    }
+
+    // 违约次数
+    html += `
+      <div class="list-item">
+        <span class="list-item-label">违约次数</span>
+        <span class="list-item-value" style="color:${violationCount > 0 ? '#EF4444' : '#22C55E'};">${violationCount} 次</span>
+      </div>`;
+
+    // 部门信息（如果有）
+    if (profile.unitName) {
+      html += `
+        <div class="list-item">
+          <span class="list-item-label">单位</span>
+          <span class="list-item-value">${escapeHtml(profile.unitName)}</span>
+        </div>`;
+    }
+
+    // 违约记录（如果有）
+    if (violations.length > 0) {
+      html += `<div style="margin-top:8px;font-size:11px;opacity:0.7;">最近违约记录：</div>`;
+      violations.slice(0, 3).forEach(v => {
+        const vDate = v.violationDate || v.date || v.gmtCreate || '--';
+        const vReason = v.violationReason || v.reason || v.memo || '--';
+        html += `<div style="margin-top:4px;font-size:11px;padding:4px 6px;background:rgba(239,68,68,0.08);border-radius:4px;">${escapeHtml(vDate)} ${escapeHtml(vReason)}</div>`;
+      });
+    }
+
+    // 原始字段提示（排障用，仅 dev）
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      const rawKeys = resp.raw_keys || [];
+      if (rawKeys.length > 0) {
+        html += `<div style="margin-top:8px;font-size:10px;opacity:0.5;">userInfo 字段: ${escapeHtml(rawKeys.join(', '))}</div>`;
+      }
+    }
+
+    card.innerHTML = html;
+  }
+
   // ---------- 渲染定时任务 ----------
   // 后端 GET /api/schedule?action=list 返回：
   //   {"code":0, "tasks":[{"id":"abc123","kind":"seat_reserve","desc":"每周mon,tue,wed,thu,fri,sat,sun 06:15 抢约3C-008"}]}
@@ -455,10 +558,11 @@
   // ---------- 刷新所有数据 ----------
   async function refreshAll() {
     try {
-      // 并行请求状态和任务列表
+      // 并行请求状态、信誉分和任务列表
       // 注意：后端返回的就是 {"code":0,...}，不是嵌套在 data 里
-      const [statusResp, scheduleResp] = await Promise.allSettled([
+      const [statusResp, creditResp, scheduleResp] = await Promise.allSettled([
         apiGet('/api/status'),
+        apiGet('/api/credit'),
         apiGet('/api/schedule', { action: 'list' }),
       ]);
 
@@ -468,16 +572,21 @@
       const statusData = statusResp.status === 'fulfilled'
         ? statusResp.value
         : { code: -1, msg: (statusResp.reason && statusResp.reason.message) || '网络错误' };
+      const creditData = creditResp.status === 'fulfilled'
+        ? creditResp.value
+        : { code: -1, msg: (creditResp.reason && creditResp.reason.message) || '网络错误' };
       const scheduleData = scheduleResp.status === 'fulfilled'
         ? scheduleResp.value
         : { code: -1, msg: (scheduleResp.reason && scheduleResp.reason.message) || '网络错误' };
 
       // 直接传整个响应对象给渲染函数（不是 .data）
       renderAccount(statusData);
+      renderCredit(creditData);
       renderTasks(scheduleData);
     } catch (e) {
       console.error('刷新失败:', e);
       renderAccount(null);
+      renderCredit(null);
       renderTasks(null);
     }
   }
