@@ -71,7 +71,18 @@
 <script src="shared.js"></script>
 <script>
 (function() {
-  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage, setToken, clearToken } = window.LibPanel;
+  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage, setToken, clearToken, triggerFlow } = window.LibPanel;
+
+  // ---------- 显示模式（URL 参数 mode，2026-08-24）----------
+  // login：登录专注视图（账号管理任务流嵌入节点用）——只显示账号卡片，隐藏其余三卡片
+  // view ：只读视图（右侧常驻 iframe 用）——未绑定只显示警告+触发按钮，不渲染绑定表单
+  // 默认 ：完整面板（其他任务流嵌入 / 直接访问）
+  const MODE = new URLSearchParams(location.search).get('mode') || '';
+  if (MODE === 'login') {
+    document.querySelectorAll('.panel-section').forEach((sec, idx) => {
+      if (idx > 0) sec.style.display = 'none';
+    });
+  }
 
   // ---------- 渲染账号状态 ----------
   // 后端 GET /api/status 返回：
@@ -102,9 +113,32 @@
       return;
     }
 
-    // 未绑定，或已绑定但本机无凭证（换设备 / 清除浏览器数据 / 其他通道绑定产生的
-    // 同步断层）→ 均渲染绑定表单：重新提交走 upsert 自动轮换凭证，本机即时恢复
-    if (!resp.bound || !window.LibPanel.hasCredential()) {
+    // ① 只读模式（view，右侧常驻 iframe）且未绑定：只显示警告 + 触发按钮，不渲染表单
+    //    原因：右侧 iframe 的 uid 变量注入未经验证，若在右侧提交表单可能绑定到错误 uid；
+    //    只读设计使 uid 即使错误也无副作用（无表单可提交）——按钮走 triggerFlow 在
+    //    对话区触发账号管理任务流（对话区 uid 注入已实测可靠）
+    if (MODE === 'view' && !resp.bound) {
+      card.innerHTML = `
+        <div class="card-header">${ICONS.user} 账号状态</div>
+        <div class="alert alert-warning" style="margin-bottom:10px;">
+          <span>${ICONS.alert}</span>
+          <div>未绑定图书馆账号，暂无法使用预约/抢座功能</div>
+        </div>
+        <div style="font-size:var(--text-sm);color:var(--color-text-secondary);margin-bottom:10px;">
+          为保证账号安全，绑定请在对话区完成。点击下方按钮，在对话区打开的绑定面板中输入学号密码
+        </div>
+        <button type="button" class="btn btn-primary btn-block js-go-bind">去绑定账号</button>`;
+      card.querySelector('.js-go-bind').addEventListener('click', () => {
+        // 配置了真实 taskId 时直接触发任务流，否则向对话区发送「绑定账号」语义触发
+        triggerFlow('bind');
+      });
+      return;
+    }
+
+    // ② 完整/登录模式：未绑定，或已绑定但本机无凭证（换设备 / 清除浏览器数据 /
+    //    其他通道绑定产生的同步断层）→ 渲染绑定表单：重新提交走 upsert 自动轮换
+    //    凭证，本机即时恢复（view 模式不进此分支——只读，凭证同步走对话区登录入口）
+    if (MODE !== 'view' && (!resp.bound || !window.LibPanel.hasCredential())) {
       const needSync = Boolean(resp.bound);
       const tip = needSync
         ? `已绑定（${escapeHtml(resp.maskedName || '--')}），但本设备未持有凭证（换设备或清除浏览器数据后会出现）。在下方重新输入账密即可同步，凭证自动轮换，其余设置不受影响`
