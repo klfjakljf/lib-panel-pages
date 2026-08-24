@@ -432,12 +432,17 @@
 
     _stTokenPromise = (async () => {
       try {
-        const url = new URL(CONFIG.API_BASE + '/api/auth/exchange', global.location.origin);
-        url.searchParams.set('uid', UID);
-        url.searchParams.set('token', TOKEN);
+        // v19：改用 POST + JSON body 携带长期 token——URL query 会被 FC 访问日志/
+        // CDN/监控工具默认完整记录，而 body 仅存在于两端内存（OAuth2 token endpoint
+        // 强制 POST 同理）；后端 index.py 同时支持 GET/POST，旧版缓存页面不受影响
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);
-        const resp = await fetch(url.toString(), { signal: controller.signal });
+        const resp = await fetch(CONFIG.API_BASE + '/api/auth/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid: UID, token: TOKEN }),
+          signal: controller.signal,
+        });
         clearTimeout(timeoutId);
         const data = await resp.json().catch(() => ({}));
         if (resp.ok && data.code === 0 && data.st_token) {
@@ -482,6 +487,15 @@
   /** 清空凭证（解绑后调用）：后续请求回落无凭证链路（GET 裸查 / POST 对话引导） */
   function clearToken() {
     setToken('');
+  }
+
+  /**
+   * 本机当前是否持有长期 token（实时值）。供面板判断「已绑定但凭证未同步」
+   * 状态（换设备/清浏览器数据/其他通道绑定）——导出的 TOKEN 是初始快照，
+   * setToken 后不更新，勿用于判断
+   */
+  function hasCredential() {
+    return Boolean(TOKEN);
   }
 
   // ============================================================
@@ -790,6 +804,8 @@
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
     x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+    eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
     inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
   };
@@ -831,6 +847,7 @@
     // 凭证管理（方案 4/5：绑定成功后 setToken 免刷新；getStToken 供调试）
     setToken,
     clearToken,
+    hasCredential,
     getStToken,
     // 工具
     formatPeriod,

@@ -102,24 +102,32 @@
       return;
     }
 
-    // 未绑定（方案 4：内嵌绑定表单，免跳转对话框直接绑定）
-    if (!resp.bound) {
+    // 未绑定，或已绑定但本机无凭证（换设备 / 清除浏览器数据 / 其他通道绑定产生的
+    // 同步断层）→ 均渲染绑定表单：重新提交走 upsert 自动轮换凭证，本机即时恢复
+    if (!resp.bound || !window.LibPanel.hasCredential()) {
+      const needSync = Boolean(resp.bound);
+      const tip = needSync
+        ? `已绑定（${escapeHtml(resp.maskedName || '--')}），但本设备未持有凭证（换设备或清除浏览器数据后会出现）。在下方重新输入账密即可同步，凭证自动轮换，其余设置不受影响`
+        : '未绑定图书馆账号，在下方表单直接绑定';
       card.innerHTML = `
         <div class="card-header">${ICONS.user} 账号状态</div>
         <div class="alert alert-warning" style="margin-bottom:10px;">
           <span>${ICONS.alert}</span>
-          <div>未绑定图书馆账号，在下方表单直接绑定</div>
+          <div>${tip}</div>
         </div>
         <form id="bindForm" autocomplete="off" novalidate>
           <div class="form-field">
             <label class="form-label" for="bindUsername">学号</label>
-            <input class="form-input" id="bindUsername" type="text" inputmode="numeric"
+            <input class="form-input" id="bindUsername" type="text" inputmode="numeric" maxlength="20"
                    placeholder="图书馆系统登录学号" autocomplete="off" required>
           </div>
           <div class="form-field">
             <label class="form-label" for="bindPassword">密码</label>
-            <input class="form-input" id="bindPassword" type="password"
-                   placeholder="图书馆系统密码" autocomplete="new-password" required>
+            <div class="pwd-wrap">
+              <input class="form-input" id="bindPassword" type="password" maxlength="64"
+                     placeholder="图书馆系统密码" autocomplete="new-password" required>
+              <button type="button" class="pwd-toggle" aria-label="显示密码" title="显示密码">${ICONS.eye}</button>
+            </div>
           </div>
           <div class="form-field">
             <label class="form-label" for="bindPushplus">PushPlus Token（可选）</label>
@@ -132,7 +140,7 @@
           <button type="submit" class="btn btn-primary btn-block" id="bindSubmitBtn">绑定</button>
           <div class="form-msg" id="bindMsg"></div>
         </form>
-        <div class="form-footnote">或在对话框输入「绑定账号」走对话流程</div>`;
+        <div class="form-footnote">绑定后凭证自动保存在本浏览器，下次打开免重复绑定</div>`;
       setupBindForm(card);
       return;
     }
@@ -157,6 +165,18 @@
     const form = card.querySelector('#bindForm');
     const msgEl = card.querySelector('#bindMsg');
     const btn = card.querySelector('#bindSubmitBtn');
+    // 密码可见性切换（掩码 ↔ 明文，方便核对输入；type=button 防误触发表单提交）
+    const pwdInput = card.querySelector('#bindPassword');
+    const pwdToggle = card.querySelector('.pwd-toggle');
+    if (pwdToggle && pwdInput) {
+      pwdToggle.addEventListener('click', () => {
+        const show = pwdInput.type === 'password';
+        pwdInput.type = show ? 'text' : 'password';
+        pwdToggle.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
+        pwdToggle.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+        pwdToggle.title = show ? '隐藏密码' : '显示密码';
+      });
+    }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       msgEl.textContent = '';

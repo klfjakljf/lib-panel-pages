@@ -190,6 +190,25 @@ html, body {
 }
 .form-input:focus { outline: none; border-color: var(--color-primary); }
 .form-input::placeholder { color: var(--color-text-muted); }
+/* 密码框可见性切换（掩码 ↔ 明文，纯本地渲染层切换，不影响传输与存储） */
+.pwd-wrap { position: relative; }
+.pwd-wrap .form-input { padding-right: 38px; }
+.pwd-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  color: var(--color-text-secondary);
+}
+.pwd-toggle:hover { color: var(--color-text); }
+.pwd-toggle svg { width: 16px; height: 16px; }
 .form-check {
   display: flex;
   align-items: center;
