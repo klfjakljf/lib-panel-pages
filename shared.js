@@ -10,7 +10,32 @@
   // ---------- URL 参数解析 ----------
   const params = new URLSearchParams(global.location.search);
   // ⚠️ robotId 是机器人 ID（INNER_robotId）不是用户 ID，不可作 uid 兜底（8-21 移除）
-  const UID = params.get('uid') || 'test_user';
+  // uid 解析优先级：URL 参数 > localStorage 身份自举 > test_user 兜底
+  // 身份自举（2026-08-24）：常驻侧边 iframe 的 URL 不支持平台变量注入（实测），
+  // 无 uid 时从同 origin localStorage 恢复身份——优先取最近使用账号
+  // （libpanel_last_uid，setToken 时维护），否则枚举唯一的 libpanel_token_* 凭证；
+  // 多账号且无最近标记时放弃自举（避免常驻面板绑错人）。
+  // 效果：对话区 iframe 完成一次绑定后，无注入的常驻面板即获得真实身份+凭证，
+  // 升级为完整功能面板。安全性：localStorage 按 origin 隔离，本页面即凭证属主。
+  function _bootstrapUid() {
+    try {
+      const lastUid = global.localStorage.getItem('libpanel_last_uid');
+      if (lastUid && global.localStorage.getItem('libpanel_token_' + lastUid)) {
+        return lastUid;
+      }
+      let found = '';
+      const prefix = 'libpanel_token_';
+      for (let i = 0; i < global.localStorage.length; i++) {
+        const k = global.localStorage.key(i);
+        if (k && k.indexOf(prefix) === 0) {
+          if (found) return '';
+          found = k.slice(prefix.length);
+        }
+      }
+      return found;
+    } catch (e) { return ''; }  // 隐私模式等 localStorage 不可用
+  }
+  const UID = params.get('uid') || _bootstrapUid() || 'test_user';
   const BOT_SIGNATURE = params.get('bot_signature') || '';
   const ROBOT_TIME = params.get('robotTime') || '';
   const ROBOT_ID = params.get('robotId') || '';
@@ -23,7 +48,7 @@
   // 持久化：URL 参数优先，其次 localStorage（超星 iframe URL 无法注入按用户定制的
   // token——平台变量只有 {{INNER_userId}}，绑定成功后存本浏览器，下次打开免重复绑定；
   // 暴露面与 URL 参数相当，且不进代理/服务器日志，整体不劣于原方案）
-  const TOKEN_STORAGE_KEY = 'libpanel_token_' + (params.get('uid') || 'test_user');
+  const TOKEN_STORAGE_KEY = 'libpanel_token_' + UID;
 
   function _loadStoredToken() {
     try { return global.localStorage.getItem(TOKEN_STORAGE_KEY) || ''; }
@@ -180,6 +205,36 @@
    */
   function sendToChat(text, hidden = false) {
     sendToCx(CXBOT.SEND, { text, hidden });
+  }
+
+  /**
+   * 动态调整本 iframe 尺寸（CXBOT:resizeMessage，2026-08-24 启用）
+   * 平台嵌入节点配置的 px 只是初始值；页面可在运行时按内容自适应上报尺寸，
+   * 如：座位图二级展开时请求加高、绑定成功后内容变矮时请求回落。
+   * 上限仍受平台约束（实测 1000×1000，宽度受宿主消息列压缩——请求超宽无效但无害）。
+   * 对侧边常驻 iframe 是否生效未实测；父窗口不认识消息时静默忽略，无副作用。
+   * @param {number} width - 请求宽度 px
+   * @param {number} height - 请求高度 px
+   */
+  function resizeIframe(width, height) {
+    sendToCx(CXBOT.RESIZE, { width, height });
+    console.log('[LibPanel] resizeMessage:', width, 'x', height);
+  }
+
+  /**
+   * 请求全屏（CXBOT:requestFullscreen）——替代用户手动点平台全屏按钮，
+   * 页面可自定义入口（如座位图「大屏操作」按钮）
+   */
+  function requestIframeFullscreen() {
+    sendToCx(CXBOT.FULLSCREEN, {});
+  }
+
+  /**
+   * 退出全屏（CXBOT:cancelFullscreen）——解决"点全屏后其他内容看不到"：
+   * 全屏态由页面自己控制进出，可提供明显的退出按钮/操作完成自动退出
+   */
+  function cancelIframeFullscreen() {
+    sendToCx(CXBOT.CANCEL_FULLSCREEN, {});
   }
 
   /**
@@ -478,8 +533,13 @@
     _stToken = '';
     _stTokenExpireAt = 0;
     try {
-      if (TOKEN) global.localStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
-      else global.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      if (TOKEN) {
+        global.localStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
+        // 身份自举配套：记录最近使用账号，无 uid 注入的常驻 iframe 按此恢复身份
+        global.localStorage.setItem('libpanel_last_uid', UID);
+      } else {
+        global.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
     } catch (e) { /* localStorage 不可用时跳过持久化（仅影响下次会话） */ }
     console.log('[LibPanel] 长期 token 已更新，短时效凭证缓存已清空');
   }
@@ -836,6 +896,10 @@
     onCxMessage,
     TASK_ID_MAP,
     FLOW_INTENT,
+    // iframe 尺寸与全屏控制（CXBOT 官方协议，2026-08-24）
+    resizeIframe,
+    requestIframeFullscreen,
+    cancelIframeFullscreen,
     // 向后兼容（旧 API，内部转 CXBOT）
     MSG,
     MSG_FROM_PARENT,

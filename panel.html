@@ -91,14 +91,16 @@
   function renderAccount(resp) {
     const card = document.getElementById('accountCard');
 
-    // API 调用失败
+    // API 调用失败（FC 不可达/超时/网络中断）——附重试按钮，免用户重开页面/重说指令
     if (!resp) {
       card.innerHTML = `
         <div class="card-header">${ICONS.user} 账号状态</div>
         <div class="alert alert-warning">
           <span>${ICONS.alert}</span>
           <div>无法连接服务器，请稍后重试</div>
-        </div>`;
+        </div>
+        <button type="button" class="btn btn-block" style="margin-top:10px;" id="retryStatusBtn">重试连接</button>`;
+      card.querySelector('#retryStatusBtn').addEventListener('click', () => refreshAll());
       return;
     }
 
@@ -109,14 +111,17 @@
         <div class="alert alert-warning">
           <span>${ICONS.alert}</span>
           <div>${escapeHtml(resp.msg || '查询失败')}</div>
-        </div>`;
+        </div>
+        <button type="button" class="btn btn-block" style="margin-top:10px;" id="retryStatusBtn">重试</button>`;
+      card.querySelector('#retryStatusBtn').addEventListener('click', () => refreshAll());
       return;
     }
 
     // ① 只读模式（view，右侧常驻 iframe）且未绑定：只显示警告 + 触发按钮，不渲染表单
-    //    原因：右侧 iframe 的 uid 变量注入未经验证，若在右侧提交表单可能绑定到错误 uid；
-    //    只读设计使 uid 即使错误也无副作用（无表单可提交）——按钮走 triggerFlow 在
-    //    对话区触发账号管理任务流（对话区 uid 注入已实测可靠）
+    //    原因：侧边常驻 iframe 的 URL 不支持平台变量注入（2026-08-24 实测确认），
+    //    uid 由 localStorage 身份自举恢复（shared.js，绑定过即正确）；但自举失效时
+    //    （清数据/换设备/多账号）仍会回落 test_user——只读设计使 uid 即使错误也无
+    //    副作用（无表单可提交），按钮走 triggerFlow 在对话区触发账号管理任务流
     if (MODE === 'view' && !resp.bound) {
       card.innerHTML = `
         <div class="card-header">${ICONS.user} 账号状态</div>
@@ -255,9 +260,12 @@
     });
   }
 
-  // ---------- 绑定成功页（展示 token 供跨设备配置 iframe URL） ----------
+  // ---------- 绑定成功页（2026-08-24 移除 token 展示与"粘贴到 URL"指令） ----------
+  // 该指令是 v18 前旧方案残留：平台内终端用户无法修改任务流 iframe URL（管理员静态模板），
+  // 且 setToken 已自动完成 localStorage 存储——token 从未需要手动放置。
+  // 跨设备正确路径 = 在新设备重新绑定（upsert 自动轮换旧 token）。
+  // URL ?token= 解析能力保留在 shared.js（独立浏览器直开/调试场景），UI 不再广告。
   function renderBindSuccess(card, resp) {
-    const token = resp.token || '';
     card.innerHTML = `
       <div class="card-header">${ICONS.user} 账号状态</div>
       <div class="alert alert-success">
@@ -265,26 +273,21 @@
         <div>绑定成功（${escapeHtml(resp.maskedName || '')}），凭证已自动生效</div>
       </div>
       <div style="margin-top:10px;font-size:var(--text-sm);color:var(--color-text-secondary);">
-        凭证已保存在本浏览器，下次打开免重复绑定。若需在其他设备使用，
-        请将下方 Token 配置到超星智能体 iframe URL 参数（&amp;token=…）：
-      </div>
-      <div class="token-box">
-        <span class="token-value" title="${escapeHtml(token)}">${escapeHtml(token)}</span>
-        <button class="btn btn-sm js-copy-token">复制</button>
+        凭证已自动保存在本浏览器，无需任何手动配置——本页面与左侧面板均可直接使用，
+        下次打开免重复绑定。在其他设备使用时，对我说「绑定账号」重新绑定即可。
       </div>
       <button class="btn btn-block" id="bindDoneBtn" style="margin-top:12px;">完成</button>`;
-    card.querySelector('.js-copy-token').addEventListener('click', async (e) => {
-      try {
-        await navigator.clipboard.writeText(token);
-        e.target.textContent = '已复制';
-        setTimeout(() => { e.target.textContent = '复制'; }, 1500);
-      } catch (err) {
-        alert('复制失败，请手动选择复制：' + token);
-      }
-    });
     card.querySelector('#bindDoneBtn').addEventListener('click', async () => {
       await refreshAll();
+      // 点「完成」回到常规卡片（已绑定视图 ~200px）——login 模式嵌入时同步下调 iframe 高度
+      if (MODE === 'login' && window.LibPanel.resizeIframe) {
+        window.LibPanel.resizeIframe(400, 260);
+      }
     });
+    // 绑定成功视图（~260px，token 展示已移除）比表单视图（~440px）矮——login 模式嵌入时主动下调
+    if (MODE === 'login' && window.LibPanel.resizeIframe) {
+      window.LibPanel.resizeIframe(400, 300);
+    }
   }
 
   // ---------- 解绑（token 生命周期终点：清内存 + localStorage） ----------
@@ -505,6 +508,13 @@
   function startAutoRefresh() {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshAll, 60000);
+    // 跨 iframe 凭证秒级同步（2026-08-24）：同一 Pages origin 的多个 iframe
+    // （对话内嵌登录面板 / 右侧常驻面板）共享 localStorage，storage 事件在
+    // 写入方之外的其他同源窗口触发——绑定 setToken / 解绑 clearToken 时，
+    // 其他面板立即感知并自动刷新（60s 轮询作为兜底）
+    window.addEventListener('storage', (e) => {
+      if (e.key && e.key.startsWith('libpanel_token_')) refreshAll();
+    });
   }
 
   function stopAutoRefresh() {
