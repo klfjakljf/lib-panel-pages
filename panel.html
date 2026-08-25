@@ -371,10 +371,12 @@
           <span class="list-item-value" style="font-size:18px;font-weight:700;color:${scoreColor};">${escapeHtml(String(score))}</span>
         </div>`;
     } else {
+      // 后端降级提示（msg 非空时展示，例如"该校未返回信誉分数据"）
+      const creditHint = (resp.msg && resp.msg.trim()) ? resp.msg.trim() : '该系统未返回';
       html += `
         <div class="list-item">
           <span class="list-item-label">信誉分</span>
-          <span class="list-item-value" style="color:#999;">该系统未返回</span>
+          <span class="list-item-value" style="color:#999;max-width:150px;text-align:right;">${escapeHtml(creditHint)}</span>
         </div>`;
     }
 
@@ -624,7 +626,14 @@
     // 写入方之外的其他同源窗口触发——绑定 setToken / 解绑 clearToken 时，
     // 其他面板立即感知并自动刷新（60s 轮询作为兜底）
     window.addEventListener('storage', (e) => {
-      if (e.key && e.key.startsWith('libpanel_token_')) refreshAll();
+      if (e.key && e.key.startsWith('libpanel_token_')) {
+        // 跨 iframe 凭证同步（2026-08-25）：本面板若在绑定前加载，TOKEN 快照为空，
+        // 直接 refreshAll 会对 /api/credit、/api/schedule 发无凭证请求 → 403
+        // （status 是白名单不受影响，故账号卡片显示已绑定而查询卡片报错）。
+        // 先重读 localStorage 的 token 再刷新数据。
+        window.LibPanel.reloadCredential();
+        refreshAll();
+      }
     });
   }
 

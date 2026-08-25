@@ -563,6 +563,24 @@
     return Boolean(TOKEN);
   }
 
+  /**
+   * 跨 iframe 凭证同步（2026-08-25，绑定后右侧面板 403 修复）：
+   * 本 iframe 若在绑定前加载，TOKEN 快照为空；另一个 iframe（登录面板）完成绑定
+   * 写入 localStorage 后，storage 事件触发本函数重读 token——否则 apiGet 会
+   * 无凭证请求 /api/credit、/api/schedule 等需鉴权接口（status 是白名单所以
+   * 账号卡片能正常显示"已绑定"，形成"状态已绑定但查询 403"的割裂现象）。
+   * 同时清空缓存的 st_token（旧凭证已随解绑/重绑失效）。
+   * 注意：UID 是加载期常量，无法在此重解析——常驻 iframe 首次绑定场景
+   * （加载时无 last_uid 回落 test_user）仍需刷新页面走身份自举。
+   */
+  function reloadCredential() {
+    TOKEN = _loadStoredToken();
+    CONFIG.HAS_CREDENTIAL = Boolean(BOT_SIGNATURE || TOKEN);
+    _stToken = '';
+    _stTokenExpireAt = 0;
+    return Boolean(TOKEN);
+  }
+
   // ============================================================
   // API 客户端（与 CXBOT 协议无关）
   // ============================================================
@@ -917,6 +935,7 @@
     setToken,
     clearToken,
     hasCredential,
+    reloadCredential,
     getStToken,
     // 工具
     formatPeriod,

@@ -170,6 +170,43 @@ const { apiGet, sendToParent, MSG, triggerFlow, hasCredential,
 let tree = [], curFloorId = null, curRoom = null, curRoomName = null;
 let roomSeats = [], sel = null, timer = null;
 
+// 图片统一收纳在 img/ 目录（相对页面路径）
+const IMG_DIR = 'img/';
+
+// 楼层节点名（"图书馆一楼学习中心"/"图书馆二楼"/"1楼"）→ 楼层号，用于匹配 floorN.jpg
+function floorNumFromName(name) {
+  const m = (name || '').match(/([一二三四五六七八九十]|\d)\s*楼/);
+  if (!m) return null;
+  const c2n = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+  const n = c2n[m[1]] !== undefined ? c2n[m[1]] : parseInt(m[1], 10);
+  return isNaN(n) ? null : n;
+}
+
+// 归一化 /api/rooms 返回的空间树：
+// 1) 真实接口是 校区→楼层→房间 三级——检测到校区层就下钻取大学城的楼层
+// 2) 桂花岗校区数据/房间图未收集（后置），琴房等无楼层号的节点一并过滤
+// 3) 楼层节点附 floorNum（平面图文件名）与 shortName（下拉/面包屑显示）
+function normalizeTree(raw) {
+  let t = raw || [];
+  if (t.length && t.some(x => (x.name || '').includes('校区'))) {
+    const dxc = t.find(x => (x.name || '').includes('大学城')) || t[0];
+    t = (dxc && dxc.children) || [];
+  }
+  t = t.filter(f => floorNumFromName(f.name) !== null);
+  for (const f of t) {
+    f.floorNum = floorNumFromName(f.name);
+    f.shortName = '一二三四五六七八九'[f.floorNum - 1] + '楼';
+  }
+  return t;
+}
+
+// 楼层平面图地址：按楼层号匹配 img/floorN.jpg
+// （楼层 id 是图书馆系统大数如 100595328，不能直接拼进文件名）
+function floorImgSrc() {
+  const f = (tree || []).find(t => t.id === curFloorId);
+  return IMG_DIR + 'floor' + ((f && f.floorNum) || curFloorId) + '.jpg';
+}
+
 // 房间名 → 图片文件名映射（保留原始大小写，如 room2C.jpg / room4A.jpg）
 // 特殊规则在前（511 拆两区、现刊阅览室=306+307 合并图、1 楼非编号房间）
 function getRoomImage(roomName) {
@@ -233,7 +270,7 @@ function updateBreadcrumb() {
   const bc = document.getElementById('breadcrumb');
   const floorSel = document.getElementById('floorSel');
   const roomSel = document.getElementById('roomSel');
-  const floorName = floorSel.value !== '' ? (tree[+floorSel.value] || {}).name : null;
+  const floorName = floorSel.value !== '' ? (tree[+floorSel.value] || {}).shortName : null;
   const roomName = roomSel.value ? roomSel.options[roomSel.selectedIndex]?.text : null;
 
   let html = '<span onclick="goHome()">座位图</span>';
@@ -277,7 +314,7 @@ function goFloor() {
   const bgImg = document.getElementById('bgImg');
   if (curFloorId) {
     bgImg.style.display = 'block';
-    bgImg.src = `floor${curFloorId}.jpg`;
+    bgImg.src = floorImgSrc();
   }
   renderSeats();
   document.getElementById('occ').textContent = floorStatText();
@@ -293,11 +330,11 @@ async function init() {
   // 401 = 后端判定未绑定；403 = 无凭证/凭证失效（直访、换设备、token 轮换）→ 统一引导绑定
   if (r.code === 401 || r.code === 403) { showUnbound(); return; }
   if (r.code !== 0) { showError(r.msg); return; }
-  tree = r.tree || [];
+  tree = normalizeTree(r.tree || []);
   document.getElementById('testStatus').textContent = '就绪';
   const fs = document.getElementById('floorSel');
   fs.innerHTML = '<option value="">选择楼层</option>' +
-    tree.map((f, i) => `<option value="${i}">${f.name}（余${f.remain}）</option>`).join('');
+    tree.map((f, i) => `<option value="${i}">${f.shortName}（余${f.remain}）</option>`).join('');
   updateBreadcrumb();
 }
 
@@ -316,7 +353,7 @@ async function onFloor() {
   // 加载楼层平面图
   const bgImg = document.getElementById('bgImg');
   bgImg.style.display = 'block';
-  bgImg.src = `floor${curFloorId}.jpg`;
+  bgImg.src = floorImgSrc();
   bgImg.onerror = function() { this.style.display = 'none'; };
 
   // 切到楼层视图：立即清场——上一房间的座位圆点是房间图内部坐标系，
@@ -339,7 +376,7 @@ async function onRoom() {
     roomSeats = [];
     const bgImg = document.getElementById('bgImg');
     if (curFloorId) {
-      bgImg.src = `floor${curFloorId}.jpg`;
+      bgImg.src = floorImgSrc();
     }
     renderSeats();
     document.getElementById('occ').textContent = floorStatText();
@@ -360,10 +397,10 @@ async function onRoom() {
   const roomImg = getRoomImage(curRoomName);
   window._missingRoomImg = !roomImg;
   if (roomImg) {
-    bgImg.src = roomImg;
+    bgImg.src = IMG_DIR + roomImg;
     bgImg.onerror = function() {
       this.onerror = null;
-      this.src = `floor${curFloorId}.jpg`;
+      this.src = floorImgSrc();
       window._missingRoomImg = true;
       showMissingImage();
     };
