@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>互动座位图</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { background: #f5f7fa; padding: 8px; }
+  .page-shell { max-width: 1200px; margin: 0 auto; }
+
+  .top-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .top-bar button { background: #3b82f6; color: #fff; border: 0; padding: 5px 10px; border-radius: 6px;
+                    cursor: pointer; font-size: 12px; }
+  .top-bar button:hover { background: #2563eb; }
+  .top-bar .status { margin-left: auto; font-size: 11px; color: #94a3b8; }
+
+  .breadcrumb { display: flex; gap: 4px; align-items: center; font-size: 13px; color: #64748b; margin-bottom: 6px; }
+  .breadcrumb span { cursor: pointer; }
+  .breadcrumb span:hover { color: #2563eb; }
+  .breadcrumb .sep { color: #cbd5e1; cursor: default; }
+  .breadcrumb .current { color: #1e293b; font-weight: 600; }
+
+  .bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  select { padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; max-width: 44vw; background: #fff; }
+  .occ { font-size: 12px; color: #555; }
+  .updated { font-size: 11px; color: #999; margin-left: auto; }
+
+  /* 核心渲染容器：等比图片 + 绝对定位 Overlay */
+  .seatmap-wrap {
+    position: relative;
+    width: 100%;
+    background: #fff;
+    border: 1px solid #e4e7ec;
+    border-radius: 10px;
+    overflow: hidden;
+    container-type: inline-size;  /* 让 .seat 可用 cqw 随图宽等比缩放 */
+  }
+  .seatmap-bg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .seatmap-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .seat {
+    position: absolute;
+    /* 官网实测：坐标 = 圆点外框【左上角】，不做居中偏移 */
+    /* 尺寸随图宽等比（官网 815px 宽时圆点 10px ≈ 图宽 1.23%）；
+       略收紧到 1.15%，保证密排走廊（行距小）圆点不相碰、不压桌边 */
+    width: 1.15cqw;
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: transform 0.15s ease, opacity 0.2s ease;
+  }
+  .seat:hover { transform: scale(1.2); z-index: 10; }
+  /* 配色对齐官网：空闲绿 / 部分占用半绿半黄 / 占用黄 / 我的蓝 / 未开放深灰 */
+  .s0 { background: #50ac33; }
+  .s1 { background: linear-gradient(90deg, #50ac33 50%, #ffc835 0); }
+  .s2 { background: #ffc835; }
+  .s3 { background: #3b82f6; }
+  .s4 { background: #646464; }
+  .seat.sel { outline: 0.18cqw solid #111827; transform: scale(1.25); z-index: 5; }
+  /* 座位号置于圆点【下方】（对齐官网 em 布局），字高随图宽等比 */
+  .seat .num {
+    position: absolute; top: 110%; left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.55cqw; line-height: 1.2;
+    color: #111; white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* 图例 */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: #64748b; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 3px; vertical-align: -1px; }
+
+  /* 未绑定 / 加载失败 视图 */
+  .state-view { display: none; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px;
+                padding: 28px 16px; text-align: center; }
+  .state-view h3 { font-size: 15px; color: #1e293b; margin-bottom: 8px; }
+  .state-view p { font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 14px; }
+  .state-view button { background: #2563eb; color: #fff; border: 0; padding: 9px 22px;
+                       border-radius: 8px; font-size: 14px; cursor: pointer; }
+  .state-view button:hover { background: #1d4ed8; }
+
+  #panel { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 14px 14px 0 0;
+           box-shadow: 0 -4px 20px #0002; padding: 14px; display: none; max-height: 55vh; overflow-y: auto; z-index: 20; }
+  #panel h3 { font-size: 15px; margin-bottom: 8px; }
+  .slot { display: inline-block; background: #fee2e2; color: #b91c1c; border-radius: 5px;
+          padding: 3px 8px; margin: 3px 4px 3px 0; font-size: 12px; }
+  .free { color: #16a34a; font-size: 13px; }
+  #pickBtn { margin-top: 10px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
+             background: #2563eb; color: #fff; font-size: 14px; cursor: pointer; }
+  #pickBtn:hover { background: #1d4ed8; }
+  #closeBtn { position: absolute; top: 8px; right: 12px; border: 0; background: none; font-size: 18px; color: #999; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="page-shell">
+
+<div class="top-bar">
+  <button onclick="forceRefresh()">刷新</button>
+  <button onclick="goFullscreen()" title="超星嵌入时 iframe 宽度会被压缩，全屏查看体验最佳">全屏查看</button>
+  <span class="status" id="testStatus">加载中...</span>
+</div>
+
+<div class="breadcrumb" id="breadcrumb">
+  <span onclick="goHome()">座位图</span>
+  <span class="sep">/</span>
+  <span class="current">请选择楼层</span>
+</div>
+
+<div class="bar">
+  <select id="floorSel" onchange="onFloor()"></select>
+  <select id="roomSel" onchange="onRoom()"></select>
+  <span class="occ" id="occ"></span>
+  <span class="updated" id="updated"></span>
+</div>
+
+<div class="seatmap-wrap" id="seatmapWrap">
+  <img class="seatmap-bg" id="bgImg" src="" alt="楼层平面图" style="display:none">
+  <div class="seatmap-overlay" id="overlay"></div>
+</div>
+
+<div class="legend">
+  <span><i style="background:#50ac33"></i>空闲</span>
+  <span><i style="background:linear-gradient(90deg,#50ac33 50%,#ffc835 0)"></i>部分时段已约</span>
+  <span><i style="background:#ffc835"></i>当前已约</span>
+  <span><i style="background:#3b82f6"></i>我的预约</span>
+  <span><i style="background:#646464"></i>未开放</span>
+</div>
+
+<!-- 未绑定引导 -->
+<div class="state-view" id="unboundView">
+  <h3>尚未绑定图书馆账号</h3>
+  <p>查看实时座位状态需要先绑定账号。<br>点击下方按钮，按对话提示输入学号与图书馆密码完成绑定。</p>
+  <button onclick="LibPanel.triggerFlow('bind')">去绑定账号</button>
+</div>
+
+<!-- 加载失败 -->
+<div class="state-view" id="errorView">
+  <h3 id="errTitle">加载失败</h3>
+  <p id="errMsg"></p>
+  <button onclick="init()">重试</button>
+</div>
+
+</div><!-- /page-shell -->
+
+<div id="panel">
+  <button id="closeBtn" onclick="panel.style.display='none'">✕</button>
+  <h3 id="pTitle"></h3>
+  <div id="pSlots"></div>
+  <div id="pFree"></div>
+  <button id="pickBtn">预约这个座位</button>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const { apiGet, sendToParent, MSG, triggerFlow, hasCredential,
+        requestIframeFullscreen, resizeIframe } = window.LibPanel;
+
+let tree = [], curFloorId = null, curRoom = null, curRoomName = null;
+let roomSeats = [], sel = null, timer = null;
+
+// 房间名 → 图片文件名映射（保留原始大小写，如 room2C.jpg / room4A.jpg）
+// 特殊规则在前（511 拆两区、现刊阅览室=306+307 合并图、1 楼非编号房间）
+function getRoomImage(roomName) {
+  const SPECIAL = {
+    '^511室-1': 'room511a.jpg',
+    '^511室-2': 'room511b.jpg',
+    '^3楼现刊': 'room306307.jpg',
+    '^一楼E': 'room1E.jpg',
+    '^111': 'room111.jpg',
+  };
+  for (const [pat, img] of Object.entries(SPECIAL)) {
+    if (new RegExp(pat).test(roomName)) return img;
+  }
+  let m = roomName.match(/^(\d{3})/);
+  if (m) return `room${m[1]}.jpg`;
+  m = roomName.match(/^(\d)楼.*（([A-Za-z])区/);
+  if (m) return `room${m[1]}${m[2]}.jpg`;
+  return null;
+}
+
+// 图书馆系统的座位坐标是相对完整图片的百分比，overlay 直接覆盖完整图片（CSS 默认 100%x100%），
+// 不做任何白边收缩，否则会引入系统性偏移。
+
+// ──────────── API（走 shared.js 鉴权链：st_token > token，8 秒超时） ────────────
+async function api(path, query) {
+  try {
+    return await apiGet(path, query);
+  } catch (e) {
+    // 401 = 未绑定 / 凭证失效；其余按错误透出
+    return { code: e.status || -1, msg: e.message || '网络错误' };
+  }
+}
+
+// ──────────── 视图切换辅助 ────────────
+function showMain() {
+  document.getElementById('unboundView').style.display = 'none';
+  document.getElementById('errorView').style.display = 'none';
+  document.querySelector('.bar').style.display = '';
+  document.querySelector('.seatmap-wrap').style.display = '';
+  document.querySelector('.legend').style.display = '';
+}
+function showUnbound() {
+  document.getElementById('unboundView').style.display = 'block';
+  document.querySelector('.bar').style.display = 'none';
+  document.querySelector('.seatmap-wrap').style.display = 'none';
+  document.querySelector('.legend').style.display = 'none';
+  document.getElementById('testStatus').textContent = '未绑定';
+}
+function showError(msg) {
+  document.getElementById('errTitle').textContent = '加载失败';
+  document.getElementById('errMsg').textContent = msg || '请稍后重试';
+  document.getElementById('errorView').style.display = 'block';
+  document.querySelector('.bar').style.display = 'none';
+  document.querySelector('.seatmap-wrap').style.display = 'none';
+  document.querySelector('.legend').style.display = 'none';
+  document.getElementById('testStatus').textContent = '加载失败';
+}
+
+// ──────────── 面包屑 ────────────
+function updateBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  const floorSel = document.getElementById('floorSel');
+  const roomSel = document.getElementById('roomSel');
+  const floorName = floorSel.value !== '' ? (tree[+floorSel.value] || {}).name : null;
+  const roomName = roomSel.value ? roomSel.options[roomSel.selectedIndex]?.text : null;
+
+  let html = '<span onclick="goHome()">座位图</span>';
+  if (floorName) {
+    html += '<span class="sep">/</span><span onclick="goFloor()">' + floorName + '</span>';
+  }
+  if (roomName) {
+    html += '<span class="sep">/</span><span class="current">' + roomName.split('（')[0] + '</span>';
+  } else if (floorName) {
+    html += '<span class="sep">/</span><span class="current">全部房间</span>';
+  } else {
+    html += '<span class="sep">/</span><span class="current">请选择楼层</span>';
+  }
+  bc.innerHTML = html;
+}
+
+function goHome() {
+  document.getElementById('floorSel').value = '';
+  document.getElementById('roomSel').innerHTML = '<option value="">选择楼层后显示房间</option>';
+  curFloorId = null; curRoom = null;
+  roomSeats = [];
+  document.getElementById('bgImg').style.display = 'none';
+  document.getElementById('overlay').innerHTML = '';
+  document.getElementById('occ').textContent = '';
+  document.getElementById('updated').textContent = '';
+  clearInterval(timer);
+  updateBreadcrumb();
+}
+
+// 楼层统计文案：楼层视图不再渲染占用率标注/座位数据，统计直接来自 /api/rooms 树
+function floorStatText() {
+  const f = (tree || []).find(t => t.id === curFloorId);
+  return f ? `本层共 ${f.total} 座 · 剩余 ${f.remain}` : '';
+}
+
+function goFloor() {
+  curRoom = null;
+  curRoomName = null;
+  document.getElementById('roomSel').value = '';
+  roomSeats = [];
+  const bgImg = document.getElementById('bgImg');
+  if (curFloorId) {
+    bgImg.style.display = 'block';
+    bgImg.src = `floor${curFloorId}.jpg`;
+  }
+  renderSeats();
+  document.getElementById('occ').textContent = floorStatText();
+  clearInterval(timer);
+  updateBreadcrumb();
+}
+
+// ──────────── 初始化 ────────────
+async function init() {
+  showMain();
+  document.getElementById('testStatus').textContent = '加载中...';
+  const r = await api('/api/rooms', { type: 'seat' });
+  // 401 = 后端判定未绑定；403 = 无凭证/凭证失效（直访、换设备、token 轮换）→ 统一引导绑定
+  if (r.code === 401 || r.code === 403) { showUnbound(); return; }
+  if (r.code !== 0) { showError(r.msg); return; }
+  tree = r.tree || [];
+  document.getElementById('testStatus').textContent = '就绪';
+  const fs = document.getElementById('floorSel');
+  fs.innerHTML = '<option value="">选择楼层</option>' +
+    tree.map((f, i) => `<option value="${i}">${f.name}（余${f.remain}）</option>`).join('');
+  updateBreadcrumb();
+}
+
+async function onFloor() {
+  const fi = document.getElementById('floorSel').value;
+  if (fi === '') { goHome(); return; }
+  const f = tree[+fi];
+  curFloorId = f.id;
+  curRoom = null;
+
+  // 加载房间列表
+  const rs = document.getElementById('roomSel');
+  rs.innerHTML = '<option value="">全部房间</option>' +
+    (f.children || []).map(r => `<option value="${r.id}">${r.name}（余${r.remain}）</option>`).join('');
+
+  // 加载楼层平面图
+  const bgImg = document.getElementById('bgImg');
+  bgImg.style.display = 'block';
+  bgImg.src = `floor${curFloorId}.jpg`;
+  bgImg.onerror = function() { this.style.display = 'none'; };
+
+  // 切到楼层视图：立即清场——上一房间的座位圆点是房间图内部坐标系，
+  // 残留在楼层平面图上就是"满屏乱点"；同时停掉房间轮询定时器
+  // 楼层视图只展示平面图 + 树统计（不再请求楼层座位/渲染占用率）
+  sel = null;
+  roomSeats = [];
+  clearInterval(timer);
+  document.getElementById('overlay').innerHTML = '';
+  document.getElementById('updated').textContent = '';
+  document.getElementById('occ').textContent = floorStatText();
+  updateBreadcrumb();
+}
+
+async function onRoom() {
+  const roomId = +document.getElementById('roomSel').value || null;
+  if (!roomId) {
+    curRoom = null;
+    curRoomName = null;
+    roomSeats = [];
+    const bgImg = document.getElementById('bgImg');
+    if (curFloorId) {
+      bgImg.src = `floor${curFloorId}.jpg`;
+    }
+    renderSeats();
+    document.getElementById('occ').textContent = floorStatText();
+    clearInterval(timer);
+    updateBreadcrumb();
+    return;
+  }
+  curRoom = roomId;
+  // 从 select 获取房间名：只去尾部「（余x）」，保留「（A区）（C区）」等区域后缀，
+  // 否则走廊类房间 getRoomImage 无法匹配，会残留显示上一个房间/楼层的地图
+  const roomSel = document.getElementById('roomSel');
+  curRoomName = roomSel.options[roomSel.selectedIndex]?.text?.replace(/（余\d+）\s*$/, '') || '';
+
+  // 加载房间专属图片
+  // 若缺图：保持楼层图为背景但【不渲染座位圆点】——房间坐标是房间内部坐标系，
+  // 画在楼层图上会满屏乱点，只提示缺图
+  const bgImg = document.getElementById('bgImg');
+  const roomImg = getRoomImage(curRoomName);
+  window._missingRoomImg = !roomImg;
+  if (roomImg) {
+    bgImg.src = roomImg;
+    bgImg.onerror = function() {
+      this.onerror = null;
+      this.src = `floor${curFloorId}.jpg`;
+      window._missingRoomImg = true;
+      showMissingImage();
+    };
+  } else {
+    showMissingImage();
+  }
+  function showMissingImage() {
+    document.getElementById('occ').textContent = `⚠️ ${curRoomName} 缺少房间平面图`;
+    document.getElementById('overlay').innerHTML = '';
+  }
+
+  // 请求前清空旧座位：房间坐标是各自图片的内部坐标系，
+  // 旧房间座位点残留在新房间图上会坐标系错配（加载间隙也会乱点）
+  document.getElementById('overlay').innerHTML = '';
+  document.getElementById('testStatus').textContent = '加载座位...';
+
+  // 守卫：快速切换房间时丢弃过期响应，避免旧房间数据覆盖当前房间
+  const reqRoom = roomId;
+  const r = await api('/api/seatmap/snapshot', { roomId });
+  if (curRoom !== reqRoom) return;  // 已切到其他房间/视图
+  if (r.code === 401 || r.code === 403) {
+    document.getElementById('testStatus').textContent = '凭证失效';
+    document.getElementById('occ').textContent = '凭证已失效，请刷新页面或重新绑定';
+    clearInterval(timer);
+    return;
+  }
+  if (r.code !== 0) {
+    document.getElementById('occ').textContent = '座位数据加载失败：' + (r.msg || '');
+    return;
+  }
+  roomSeats = r.seats || [];
+  if (window._missingRoomImg) {
+    // 缺图：不渲染座位（防止坐标系错配满屏乱点），仅提示
+    document.getElementById('overlay').innerHTML = '';
+    clearInterval(timer);
+    updateBreadcrumb();
+    return;
+  }
+  const occ = roomSeats.filter(s => s.state === 1 || s.state === 2 || s.state === 3).length;
+  document.getElementById('occ').textContent = `占用 ${occ}/${roomSeats.length}`;
+  document.getElementById('updated').textContent = '更新于 ' + (r.updatedAt || '');
+  document.getElementById('testStatus').textContent = '就绪';
+  renderSeats();
+  clearInterval(timer);
+  timer = setInterval(() => loadRoomSeats(), 30000);
+  updateBreadcrumb();
+}
+
+async function loadRoomSeats() {
+  if (!curRoom) return;
+  const reqRoom = curRoom;
+  const r = await api('/api/seatmap/snapshot', { roomId: curRoom, _t: Date.now() });
+  if (curRoom !== reqRoom) return;  // 定时器响应回来时已切走，丢弃
+  if (r.code !== 0) return;
+  roomSeats = r.seats || [];
+  const occ = roomSeats.filter(s => s.state === 1 || s.state === 2 || s.state === 3).length;
+  document.getElementById('occ').textContent = `占用 ${occ}/${roomSeats.length}`;
+  document.getElementById('updated').textContent = '更新于 ' + (r.updatedAt || '');
+  renderSeats();
+}
+
+// ──────────── 渲染 ────────────
+function renderSeats() {
+  const overlay = document.getElementById('overlay');
+  if (curRoom) {
+    // 房间模式：渲染房间内座位圆点
+    const html = roomSeats
+      .filter(s => s.x !== null && s.y !== null)
+      .map(s => {
+        const label = (s.name || '').split('-')[1] || s.name;
+        const selClass = sel === s.name ? ' sel' : '';
+        const left = parseFloat(s.x).toFixed(2);
+        const top = parseFloat(s.y).toFixed(2);
+        return `<div class="seat s${s.state}${selClass}"
+                     style="left:${left}%;top:${top}%"
+                     onclick="pick('${s.name}')"
+                     title="${s.name}"><span class="num">${label}</span></div>`;
+      }).join('');
+    overlay.innerHTML = html;
+  } else {
+    // 楼层/首页模式：仅平面图，无座位圆点、无占用率标注
+    overlay.innerHTML = '';
+  }
+}
+
+function forceRefresh() {
+  if (curRoom) {
+    document.getElementById('testStatus').textContent = '刷新中...';
+    loadRoomSeats();
+  } else if (curFloorId) {
+    init();
+  }
+}
+
+function goFullscreen() {
+  requestIframeFullscreen();
+}
+
+// ──────────── 座位点击 ────────────
+function pick(name) {
+  sel = name;
+  const s = roomSeats.find(x => x.name === name);
+  if (!s) return;
+  renderSeats();
+  // 开放时间：起止相同视为全天（101/1E/111 等房间系统返回 08:00~08:00）
+  let openText = '开放 08:00-21:00';
+  if (s.open && s.open[0] && s.open[1]) {
+    openText = s.open[0] === s.open[1] ? '全天开放' : `开放 ${s.open[0]}-${s.open[1]}`;
+  }
+  document.getElementById('pTitle').textContent = `${name}（${openText}）`;
+  document.getElementById('pSlots').innerHTML = (s.slots && s.slots.length)
+    ? '已约时段：<br>' + s.slots.map(t => `<span class="slot">${t[0]} ~ ${t[1]}</span>`).join('')
+    : '<span class="free">今日全部时段空闲</span>';
+  document.getElementById('pFree').textContent = '';
+  document.getElementById('panel').style.display = 'block';
+
+  const pickBtn = document.getElementById('pickBtn');
+  if (!hasCredential()) {
+    pickBtn.textContent = '绑定后即可预约';
+    pickBtn.disabled = true;
+    pickBtn.style.background = '#9ca3af';
+    pickBtn.onclick = null;
+    return;
+  }
+  pickBtn.textContent = '预约这个座位';
+  pickBtn.disabled = false;
+  pickBtn.style.background = '#2563eb';
+  pickBtn.onclick = () => {
+    // 选座回传：shared.js 转为 CXBOT 隐藏消息（devName + room），
+    // 由超星任务流的表单/消息节点接收后进入预约流程
+    sendToParent(MSG.SEAT_PICK, { seat: name, room: curRoomName });
+    document.getElementById('pFree').textContent = '已发送给智能体，请在对话中确认预约时段';
+    document.getElementById('testStatus').textContent = '已选座: ' + name;
+  };
+}
+
+init();
+</script>
+</body>
+</html>

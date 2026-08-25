@@ -346,7 +346,9 @@
       return;
     }
 
-    const score = resp.score;
+    // -1 哨兵（2026-08-25）：插件出参 schema 要求 Number，后端用 -1 表示"系统未返回"
+    const rawScore = resp.score;
+    const score = (rawScore === null || rawScore === undefined || rawScore < 0) ? null : rawScore;
     const violationCount = resp.violationCount || 0;
     const profile = resp.profile || {};
     const violations = resp.violations || [];
