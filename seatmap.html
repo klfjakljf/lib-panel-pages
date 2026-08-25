@@ -207,14 +207,15 @@ function floorImgSrc() {
   return IMG_DIR + 'floor' + ((f && f.floorNum) || curFloorId) + '.jpg';
 }
 
-// 房间名 → 图片文件名映射（保留原始大小写，如 room2C.jpg / room4A.jpg）
+// 房间名 → 图片文件名映射（文件名统一小写：GitHub Pages 区分大小写，
+// 房间名"C区/A区"里的大写字母拼接时必须 toLowerCase，否则 404）
 // 特殊规则在前（511 拆两区、现刊阅览室=306+307 合并图、1 楼非编号房间）
 function getRoomImage(roomName) {
   const SPECIAL = {
     '^511室-1': 'room511a.jpg',
     '^511室-2': 'room511b.jpg',
     '^3楼现刊': 'room306307.jpg',
-    '^一楼E': 'room1E.jpg',
+    '^一楼E': 'room1e.jpg',
     '^111': 'room111.jpg',
   };
   for (const [pat, img] of Object.entries(SPECIAL)) {
@@ -223,7 +224,7 @@ function getRoomImage(roomName) {
   let m = roomName.match(/^(\d{3})/);
   if (m) return `room${m[1]}.jpg`;
   m = roomName.match(/^(\d)楼.*（([A-Za-z])区/);
-  if (m) return `room${m[1]}${m[2]}.jpg`;
+  if (m) return `room${m[1]}${m[2].toLowerCase()}.jpg`;
   return null;
 }
 
