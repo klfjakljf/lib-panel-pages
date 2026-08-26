@@ -52,9 +52,8 @@
     position: absolute;
     /* 官网实测：坐标 = 圆点外框【左上角】，不做居中偏移 */
     /* 尺寸随图宽等比（官网 815px 宽时圆点 10px ≈ 图宽 1.23%）；
-       略收紧到 1.15%，保证密排走廊（行距小）圆点不相碰、不压桌边。
-       保底 7px：超星 iframe 宽度约 450px 时 1.15cqw≈5px 过小，圆点难辨识 */
-    width: max(1.15cqw, 7px);
+       略收紧到 1.15%，保证密排走廊（行距小）圆点不相碰、不压桌边 */
+    width: 1.15cqw;
     aspect-ratio: 1 / 1;
     border-radius: 50%;
     cursor: pointer;
@@ -68,19 +67,15 @@
   .s2 { background: #ffc835; }
   .s3 { background: #3b82f6; }
   .s4 { background: #646464; }
-  .seat.sel { outline: max(0.18cqw, 2px) solid #111827; transform: scale(1.25); z-index: 5; }
-  /* 座位号置于圆点【下方】（对齐官网 em 布局），字高随图宽等比。
-     保底 9px：超星 iframe 约 450px 宽时 0.55cqw≈2.5px，编号糊成一片（401 密排房间尤甚） */
+  .seat.sel { outline: 0.18cqw solid #111827; transform: scale(1.25); z-index: 5; }
+  /* 座位号置于圆点【下方】（对齐官网 em 布局），字高随图宽等比 */
   .seat .num {
     position: absolute; top: 110%; left: 50%;
     transform: translateX(-50%);
-    font-size: max(0.55cqw, 9px); line-height: 1.2;
+    font-size: 0.55cqw; line-height: 1.2;
     color: #111; white-space: nowrap;
     pointer-events: none;
-    text-shadow: 0 0 3px #fff, 0 0 3px #fff;  /* 白描边：密集时与背景图线条区分 */
   }
-  /* 密集房间隐藏编号（编号开关关/座位≥150 自动隐藏），靠 hover title 与点击面板看号 */
-  .seatmap-wrap.hide-nums .seat .num { display: none; }
 
   /* 图例 */
   .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: #64748b; }
@@ -113,7 +108,6 @@
 
 <div class="top-bar">
   <button onclick="forceRefresh()">刷新</button>
-  <button id="numBtn" onclick="toggleNums()" title="座位密集时编号会互相重叠，可关闭编号；点击座位仍可查看座位号">编号: 开</button>
   <button onclick="goFullscreen()" title="超星嵌入时 iframe 宽度会被压缩，全屏查看体验最佳">全屏查看</button>
   <span class="status" id="testStatus">加载中...</span>
 </div>
@@ -469,32 +463,6 @@ async function loadRoomSeats() {
   renderSeats();
 }
 
-// ──────────── 座位编号开关 ────────────
-// 密集房间（如 401 特藏书库 220 座）编号互相重叠糊成一片，提供开关；
-// 用户未手动切换过时：座位数 ≥ 150 的房间默认隐藏编号
-const NUM_DENSE = 150;
-let numMode = localStorage.getItem('libpanel_numMode');  // 'on' / 'off' / null
-
-function numsVisible() {
-  if (numMode === 'on') return true;
-  if (numMode === 'off') return false;
-  return (roomSeats || []).length < NUM_DENSE;
-}
-
-function toggleNums() {
-  numMode = numsVisible() ? 'off' : 'on';
-  localStorage.setItem('libpanel_numMode', numMode);
-  renderSeats();
-  updateNumBtn();
-}
-
-function updateNumBtn() {
-  const btn = document.getElementById('numBtn');
-  const on = numsVisible();
-  btn.textContent = on ? '编号: 开' : '编号: 关';
-  document.getElementById('seatmapWrap').classList.toggle('hide-nums', !on);
-}
-
 // ──────────── 渲染 ────────────
 function renderSeats() {
   const overlay = document.getElementById('overlay');
@@ -513,11 +481,9 @@ function renderSeats() {
                      title="${s.name}"><span class="num">${label}</span></div>`;
       }).join('');
     overlay.innerHTML = html;
-    updateNumBtn();
   } else {
     // 楼层/首页模式：仅平面图，无座位圆点、无占用率标注
     overlay.innerHTML = '';
-    document.getElementById('seatmapWrap').classList.remove('hide-nums');
   }
 }
 
