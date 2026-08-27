@@ -35,8 +35,19 @@
     border: 1px solid #e4e7ec;
     border-radius: 10px;
     overflow: hidden;
-    container-type: inline-size;  /* 让 .seat 可用 cqw 随图宽等比缩放 */
   }
+  /* 取景框内层：宽度收缩到图片实际渲染宽度，
+     座位百分比坐标与 cqw 单位都以图片实际显示区为基准 → 取景模式下坐标零偏移。
+     注意：container-type 不能挂在这层——inline-size 包含会让 width:fit-content
+     忽略图片宽度而塌缩为 0，改挂在 overlay 上（宽度恒为 100%，无此问题） */
+  .seatmap-frame {
+    position: relative;
+    width: 100%;
+  }
+  /* 取景框模式（一楼E区/数字化区等特殊房间）：限高 + 居中，防止超尺寸图片撑爆 iframe */
+  .seatmap-wrap.framed { display: flex; justify-content: center; }
+  .seatmap-wrap.framed .seatmap-frame { width: fit-content; max-width: 100%; }
+  .seatmap-wrap.framed .seatmap-bg { max-height: 65vh; width: auto; max-width: 100%; height: auto; }
   .seatmap-bg {
     width: 100%;
     height: auto;
@@ -47,13 +58,16 @@
     top: 0; left: 0;
     width: 100%; height: 100%;
     pointer-events: none;
+    container-type: inline-size;  /* .seat 的 cqw 基准 = 图片实际渲染宽度 */
   }
   .seat {
     position: absolute;
     /* 官网实测：坐标 = 圆点外框【左上角】，不做居中偏移 */
     /* 尺寸随图宽等比（官网 815px 宽时圆点 10px ≈ 图宽 1.23%）；
-       略收紧到 1.15%，保证密排走廊（行距小）圆点不相碰、不压桌边 */
-    width: 1.15cqw;
+       略收紧到 1.15%，保证密排走廊（行距小）圆点不相碰、不压桌边。
+       取景框房间（一楼E区/111数字化区）经 setFramed() 注入更大的
+       --seat-size/--num-size（按官网 pointSize/textSize 比例换算） */
+    width: var(--seat-size, 1.15cqw);
     aspect-ratio: 1 / 1;
     border-radius: 50%;
     cursor: pointer;
@@ -72,7 +86,7 @@
   .seat .num {
     position: absolute; top: 110%; left: 50%;
     transform: translateX(-50%);
-    font-size: 0.55cqw; line-height: 1.2;
+    font-size: var(--num-size, 0.55cqw); line-height: 1.2;
     color: #111; white-space: nowrap;
     pointer-events: none;
   }
@@ -96,6 +110,30 @@
   .slot { display: inline-block; background: #fee2e2; color: #b91c1c; border-radius: 5px;
           padding: 3px 8px; margin: 3px 4px 3px 0; font-size: 12px; }
   .free { color: #16a34a; font-size: 13px; }
+
+  /* 座位预约时间轴（对齐官网：横条可视化占用） */
+  .tl-label { font-size: 12px; color: #475569; margin-bottom: 4px; }
+  .tl { position: relative; height: 16px; border-radius: 4px; background: #dcfce7; margin: 4px 0 2px; overflow: hidden; }
+  .tl .seg { position: absolute; top: 0; bottom: 0; background: #ef4444; }
+  .tl-ends { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
+  .tl-legend { font-size: 11px; color: #64748b; margin: 2px 0 6px; }
+  .tl-legend i { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: -1px; }
+
+  /* 预约规则 */
+  .rules { font-size: 11px; color: #64748b; background: #f8fafc; border: 1px dashed #e2e8f0;
+           border-radius: 6px; padding: 6px 8px; margin: 8px 0; line-height: 1.7; }
+
+  /* 日期选择（今天/明天 chips）——图书馆系统仅支持提前 0-1 天预约 */
+  .day-row { display: flex; gap: 6px; margin: 8px 0 0; }
+  .day-chip { flex: 1; padding: 6px 0; text-align: center; font-size: 13px; color: #475569;
+              background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px;
+              cursor: pointer; transition: all 0.15s ease; user-select: none; }
+  .day-chip.on { background: #eff6ff; border-color: #2563eb; color: #1d4ed8; font-weight: 600; }
+
+  /* 时段选择（双下拉，对齐官网范式） */
+  .period-row { display: flex; gap: 6px; align-items: center; margin: 8px 0 2px; font-size: 13px; color: #334155; }
+  .period-row select { flex: 1; max-width: none; }
+  #pErr { color: #dc2626; font-size: 12px; min-height: 16px; margin-top: 4px; }
   #pickBtn { margin-top: 10px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
              background: #2563eb; color: #fff; font-size: 14px; cursor: pointer; }
   #pickBtn:hover { background: #1d4ed8; }
@@ -126,8 +164,10 @@
 </div>
 
 <div class="seatmap-wrap" id="seatmapWrap">
-  <img class="seatmap-bg" id="bgImg" src="" alt="楼层平面图" style="display:none">
-  <div class="seatmap-overlay" id="overlay"></div>
+  <div class="seatmap-frame">
+    <img class="seatmap-bg" id="bgImg" src="" alt="楼层平面图" style="display:none">
+    <div class="seatmap-overlay" id="overlay"></div>
+  </div>
 </div>
 
 <div class="legend">
@@ -157,7 +197,20 @@
 <div id="panel">
   <button id="closeBtn" onclick="panel.style.display='none'">✕</button>
   <h3 id="pTitle"></h3>
-  <div id="pSlots"></div>
+  <div class="tl-label">座位预约时间</div>
+  <div class="tl" id="pTimeline"></div>
+  <div class="tl-ends" id="tlEnds"></div>
+  <div class="tl-legend"><i style="background:#ef4444"></i>已约<i style="background:#dcfce7;border:1px solid #d1d5db"></i>可预约</div>
+  <div class="rules">预约规则：当日开放 08:30–22:15；提前预约范围 0–1 天；单次预约时长 60–240 分钟。</div>
+  <div class="day-row">
+    <div class="day-chip on" id="dayToday" onclick="setPickDay(0)">今天</div>
+    <div class="day-chip" id="dayTomorrow" onclick="setPickDay(1)">明天</div>
+  </div>
+  <div class="period-row">
+    开始 <select id="selStart"></select>
+    结束 <select id="selEnd"></select>
+  </div>
+  <div id="pErr"></div>
   <div id="pFree"></div>
   <button id="pickBtn">预约这个座位</button>
 </div>
@@ -169,6 +222,7 @@ const { apiGet, sendToParent, MSG, triggerFlow, hasCredential,
 
 let tree = [], curFloorId = null, curRoom = null, curRoomName = null;
 let roomSeats = [], sel = null, timer = null;
+let pickDay = 0;  // 预约日期：0=今天 1=明天（图书馆系统仅支持提前 0-1 天）
 
 // 图片统一收纳在 img/ 目录（相对页面路径）
 const IMG_DIR = 'img/';
@@ -230,6 +284,30 @@ function getRoomImage(roomName) {
 
 // 图书馆系统的座位坐标是相对完整图片的百分比，overlay 直接覆盖完整图片（CSS 默认 100%x100%），
 // 不做任何白边收缩，否则会引入系统性偏移。
+
+// ──────────── 取景框模式（一楼E区 / 111数字化学习区） ────────────
+// 两房间原图远大于其他房间图（room1e 1200×860、room111 776×900 竖图），
+// 宽度撑满时高度会撑爆 iframe → .framed 限高 65vh + 居中。
+// 座位点/字号按官网 pointSize/textSize 与图宽的比例换算（其他房间用 CSS 默认值）：
+//   一楼E区：point 16/1200 ≈ 1.33cqw，text 10/1200 ≈ 0.83cqw
+//   111数字化：point 12/776 ≈ 1.55cqw，text 12/776 ≈ 1.55cqw
+const FRAMED_ROOMS = {
+  '^一楼E': { seat: '1.33cqw', num: '0.83cqw' },
+  '^111数字化': { seat: '1.55cqw', num: '1.55cqw' },
+};
+function setFramed(roomName) {
+  let cfg = null;
+  if (roomName) {
+    for (const [pat, c] of Object.entries(FRAMED_ROOMS)) {
+      if (new RegExp(pat).test(roomName)) { cfg = c; break; }
+    }
+  }
+  document.getElementById('seatmapWrap').classList.toggle('framed', !!cfg);
+  const frame = document.querySelector('.seatmap-frame');
+  // 置空 = 移除变量，回落到 CSS 默认（1.15cqw / 0.55cqw）
+  frame.style.setProperty('--seat-size', cfg ? cfg.seat : '');
+  frame.style.setProperty('--num-size', cfg ? cfg.num : '');
+}
 
 // ──────────── API（走 shared.js 鉴权链：st_token > token，8 秒超时） ────────────
 async function api(path, query) {
@@ -294,6 +372,7 @@ function goHome() {
   curFloorId = null; curRoom = null;
   roomSeats = [];
   document.getElementById('bgImg').style.display = 'none';
+  setFramed(null);
   document.getElementById('overlay').innerHTML = '';
   document.getElementById('occ').textContent = '';
   document.getElementById('updated').textContent = '';
@@ -312,6 +391,7 @@ function goFloor() {
   curRoomName = null;
   document.getElementById('roomSel').value = '';
   roomSeats = [];
+  setFramed(null);
   const bgImg = document.getElementById('bgImg');
   if (curFloorId) {
     bgImg.style.display = 'block';
@@ -356,6 +436,7 @@ async function onFloor() {
   bgImg.style.display = 'block';
   bgImg.src = floorImgSrc();
   bgImg.onerror = function() { this.style.display = 'none'; };
+  setFramed(null);
 
   // 切到楼层视图：立即清场——上一房间的座位圆点是房间图内部坐标系，
   // 残留在楼层平面图上就是"满屏乱点"；同时停掉房间轮询定时器
@@ -375,6 +456,7 @@ async function onRoom() {
     curRoom = null;
     curRoomName = null;
     roomSeats = [];
+    setFramed(null);  // 回到楼层图：退出取景框
     const bgImg = document.getElementById('bgImg');
     if (curFloorId) {
       bgImg.src = floorImgSrc();
@@ -399,13 +481,17 @@ async function onRoom() {
   window._missingRoomImg = !roomImg;
   if (roomImg) {
     bgImg.src = IMG_DIR + roomImg;
+    // 取景框模式：一楼E区/111数字化学习区（超大图限高居中，座位点/字号按官网比例调大）
+    setFramed(curRoomName);
     bgImg.onerror = function() {
       this.onerror = null;
       this.src = floorImgSrc();
+      setFramed(null);  // 图片 404 回落楼层图：退出取景框
       window._missingRoomImg = true;
       showMissingImage();
     };
   } else {
+    setFramed(null);  // 缺图保持楼层图：退出取景框
     showMissingImage();
   }
   function showMissingImage() {
@@ -501,21 +587,132 @@ function goFullscreen() {
 }
 
 // ──────────── 座位点击 ────────────
+// 预约规则常量（对齐图书馆系统）
+const OPEN_DEFAULT = ['08:30', '22:15'];  // 当日开放
+const STEP = 5;      // 时段粒度：5 分钟（与官网下拉一致）
+const MIN_DUR = 60;  // 单次预约最短 60 分钟
+const MAX_DUR = 240; // 单次预约最长 240 分钟
+
+const toMin = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+const toHHMM = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+
+// 座位开放时间：起止相同（如 08:00~08:00）视为全天，用规则默认值兜底
+function seatOpen(s) {
+  if (s.open && s.open[0] && s.open[1] && s.open[0] !== s.open[1]) return s.open;
+  return OPEN_DEFAULT;
+}
+
+// ── 座位预约时间轴（横条：红=已约，绿底=可约）──
+function renderTimeline(s) {
+  const [os, oe] = seatOpen(s);
+  const total = toMin(oe) - toMin(os);
+  const tl = document.getElementById('pTimeline');
+  let html = '';
+  (s.slots || []).forEach(([a, b]) => {
+    const l = ((toMin(a) - toMin(os)) / total) * 100;
+    const w = ((toMin(b) - toMin(a)) / total) * 100;
+    if (w > 0) html += `<div class="seg" style="left:${l}%;width:${w}%" title="已约 ${a} ~ ${b}"></div>`;
+  });
+  tl.innerHTML = html;
+  document.getElementById('tlEnds').innerHTML = `<span>${os}</span><span>${oe}</span>`;
+}
+
+// ── 双下拉时段选择（对齐官网范式：开始+结束，约束前置）──
+// 已约/已过时刻灰显不可选；结束下拉被 60-240 分钟时长 + 闭馆 + 下一已约段三重截断
+// pickDay=1（明天）时解除"已过时刻"约束——明天的可约时刻不受当前时间限制
+function renderPeriodPicker(s) {
+  const selStart = document.getElementById('selStart');
+  const selEnd = document.getElementById('selEnd');
+  const [os, oe] = seatOpen(s);
+  const openMin = toMin(os), closeMin = toMin(oe);
+  const nowMin = pickDay === 0 ? (new Date().getHours() * 60 + new Date().getMinutes()) : -1;
+  const busy = (s.slots || []).map(([a, b]) => [toMin(a), toMin(b)]).sort((x, y) => x[0] - y[0]);
+
+  const nextBusyAfter = t => {  // t 时刻之后（含）的第一个已约段起点
+    for (const [a] of busy) if (a > t) return a;
+    return closeMin;
+  };
+  const inBusy = t => busy.some(([a, b]) => t >= a && t < b);
+
+  function buildStart() {
+    let first = null;
+    let html = '';
+    for (let t = openMin; t <= closeMin - MIN_DUR; t += STEP) {
+      // 非法开始：已过时刻 / 落在已约段内 / 剩余可约时长不足 60 分钟
+      const ok = t >= nowMin && !inBusy(t) && (Math.min(nextBusyAfter(t), closeMin) - t) >= MIN_DUR;
+      html += `<option value="${toHHMM(t)}"${ok ? '' : ' disabled'}>${toHHMM(t)}</option>`;
+      if (ok && first === null) first = toHHMM(t);
+    }
+    selStart.innerHTML = html || `<option value="">${pickDay ? '明天' : '今日'}无可约时段</option>`;
+    selStart.value = first || '';
+    buildEnd();
+  }
+
+  function buildEnd() {
+    if (!selStart.value) { selEnd.innerHTML = ''; return; }
+    const startMin = toMin(selStart.value);
+    // 硬上限 = min(240分钟, 闭馆, 开始后的第一个已约段)
+    const hardEnd = Math.min(startMin + MAX_DUR, closeMin, nextBusyAfter(startMin));
+    let html = '';
+    for (let t = startMin + MIN_DUR; t <= hardEnd; t += STEP) {
+      html += `<option value="${toHHMM(t)}">${toHHMM(t)}</option>`;
+    }
+    selEnd.innerHTML = html || '<option value="">无可选结束时刻</option>';
+    // 默认拉满到最晚合法时刻
+    if (selEnd.options.length) selEnd.value = selEnd.options[selEnd.options.length - 1].value;
+  }
+
+  selStart.onchange = buildEnd;
+  buildStart();
+}
+
+// 提交前校验：下拉约束的漏网（停留期间被抢/极端边角）在此兜底
+function validatePeriod(s) {
+  const selStart = document.getElementById('selStart');
+  const selEnd = document.getElementById('selEnd');
+  if (!selStart.value || !selEnd.value) return { ok: false, msg: `${pickDay ? '明天' : '今日'}无可约时段` };
+  const a = toMin(selStart.value), b = toMin(selEnd.value);
+  if (b - a < MIN_DUR) return { ok: false, msg: `预约时长不能少于 ${MIN_DUR} 分钟` };
+  if (b - a > MAX_DUR) return { ok: false, msg: `预约时长不能超过 ${MAX_DUR} 分钟` };
+  const clash = (s.slots || []).find(([x, y]) => a < toMin(y) && b > toMin(x));
+  if (clash) return { ok: false, msg: `${clash[0]} ~ ${clash[1]} 已被占用` };
+  return { ok: true, start: selStart.value, end: selEnd.value };
+}
+
+// 日期 chips 切换：重渲染时段下拉（明天解除"已过时刻"约束），时间轴占用仅供参考
+function setPickDay(d) {
+  if (pickDay === d) return;
+  pickDay = d;
+  document.getElementById('dayToday').classList.toggle('on', d === 0);
+  document.getElementById('dayTomorrow').classList.toggle('on', d === 1);
+  const s = roomSeats.find(x => x.name === sel);
+  if (!s) return;
+  document.querySelector('.tl-label').textContent = d === 1 ? '座位预约时间（明天，占用仅供参考）' : '座位预约时间';
+  document.getElementById('pErr').textContent = '';
+  document.getElementById('pFree').textContent = '';
+  renderPeriodPicker(s);
+}
+
 function pick(name) {
   sel = name;
   const s = roomSeats.find(x => x.name === name);
   if (!s) return;
   renderSeats();
+  // 每次选座重置为"今天"
+  pickDay = 0;
+  document.getElementById('dayToday').classList.add('on');
+  document.getElementById('dayTomorrow').classList.remove('on');
   // 开放时间：起止相同视为全天（101/1E/111 等房间系统返回 08:00~08:00）
-  let openText = '开放 08:00-21:00';
-  if (s.open && s.open[0] && s.open[1]) {
-    openText = s.open[0] === s.open[1] ? '全天开放' : `开放 ${s.open[0]}-${s.open[1]}`;
+  let openText = `开放 ${OPEN_DEFAULT[0]}-${OPEN_DEFAULT[1]}`;
+  if (s.open && s.open[0] && s.open[1] && s.open[0] !== s.open[1]) {
+    openText = `开放 ${s.open[0]}-${s.open[1]}`;
   }
   document.getElementById('pTitle').textContent = `${name}（${openText}）`;
-  document.getElementById('pSlots').innerHTML = (s.slots && s.slots.length)
-    ? '已约时段：<br>' + s.slots.map(t => `<span class="slot">${t[0]} ~ ${t[1]}</span>`).join('')
-    : '<span class="free">今日全部时段空闲</span>';
+  document.getElementById('pErr').textContent = '';
   document.getElementById('pFree').textContent = '';
+  document.querySelector('.tl-label').textContent = '座位预约时间';
+  renderTimeline(s);
+  renderPeriodPicker(s);
   document.getElementById('panel').style.display = 'block';
 
   const pickBtn = document.getElementById('pickBtn');
@@ -530,10 +727,26 @@ function pick(name) {
   pickBtn.disabled = false;
   pickBtn.style.background = '#2563eb';
   pickBtn.onclick = () => {
-    // 选座回传：shared.js 转为 CXBOT 隐藏消息（devName + room），
-    // 由超星任务流的表单/消息节点接收后进入预约流程
-    sendToParent(MSG.SEAT_PICK, { seat: name, room: curRoomName });
-    document.getElementById('pFree').textContent = '已发送给智能体，请在对话中确认预约时段';
+    const v = validatePeriod(s);
+    if (!v.ok) {
+      document.getElementById('pErr').textContent = v.msg;
+      // 时段被抢则刷新时间轴与下拉
+      renderTimeline(s);
+      renderPeriodPicker(s);
+      return;
+    }
+    // 选座回传：shared.js 转为 CXBOT 隐藏消息（devName + room + date + periods），
+    // 由座位预约任务流的 normalize_input 解析后执行
+    const date = new Date();
+    if (pickDay === 1) date.setDate(date.getDate() + 1);  // 明天
+    const ymd = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+    const dayText = pickDay === 1 ? '明天' : '今天';
+    sendToParent(MSG.SEAT_PICK, {
+      seat: name, room: curRoomName,
+      date: ymd, periods: [`${v.start}-${v.end}`],
+    });
+    document.getElementById('pErr').textContent = '';
+    document.getElementById('pFree').textContent = `已发送预约请求（${dayText} ${v.start} ~ ${v.end}），请在对话中查看结果`;
     document.getElementById('testStatus').textContent = '已选座: ' + name;
   };
 }

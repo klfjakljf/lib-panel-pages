@@ -414,12 +414,17 @@
         return;
       }
       case MSG.SEAT_PICK: {
-        // 选座回传：发送隐藏消息，内容由任务流解析
-        const formData = JSON.stringify([
+        // 选座回传：发送隐藏消息，内容由任务流 normalize_input 解析。
+        // date/periods 由座位图时段选择器产生（无时段时省略，由任务流追问）
+        const form = [
           { name: 'devName', value: payload.seat },
           { name: 'room', value: payload.room },
-        ]);
-        sendToChat(formData, true);
+        ];
+        if (payload.date) form.push({ name: 'date', value: payload.date });
+        if (payload.periods && payload.periods.length) {
+          form.push({ name: 'periods', value: payload.periods.join(',') });
+        }
+        sendToChat(JSON.stringify(form), true);
         return;
       }
       case MSG.LOAD_IFRAME: {
