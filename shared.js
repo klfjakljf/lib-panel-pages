@@ -319,12 +319,14 @@
   // ⚠️ 部署前必须替换为真实 taskId
   // 获取方式：超星平台 → 任务流管理 → 编辑对应任务流 → URL 里的 taskId 参数
   const TASK_ID_MAP = {
-    'bind': 'TODO_REPLACE_WITH_BIND_TASK_ID',
-    'unbind': 'TODO_REPLACE_WITH_UNBIND_TASK_ID',
-    'seat-reserve': 'TODO_REPLACE_WITH_SEAT_RESERVE_TASK_ID',
+    'bind': '149783',
+    'unbind': '149783',
+    'seat-reserve': '150328',
     'timer-reserve': 'TODO_REPLACE_WITH_TIMER_RESERVE_TASK_ID',
     'timer-manage': 'TODO_REPLACE_WITH_TIMER_MANAGE_TASK_ID',
-    'room-reserve': 'TODO_REPLACE_WITH_ROOM_RESERVE_TASK_ID',
+    'room-reserve': '164198',
+    'room-cancel': '164200',
+    'seat-cancel': '164201',
     'analysis': 'TODO_REPLACE_WITH_ANALYSIS_TASK_ID',
     'credit': 'TODO_REPLACE_WITH_CREDIT_TASK_ID',
     'chat': null, // chat 用语义触发，不需要 taskId
@@ -338,6 +340,8 @@
     'timer-reserve': '设置定时抢座',
     'timer-manage': '取消定时任务',
     'room-reserve': '预约研讨室',
+    'room-cancel': '取消研讨室预约',
+    'seat-cancel': '取消座位预约',
     'analysis': '查空座',
     'credit': '查信誉分',
     'chat': null, // chat 用调用方传入的 message
@@ -414,8 +418,8 @@
         return;
       }
       case MSG.SEAT_PICK: {
-        // 选座回传：发送隐藏消息，内容由任务流 normalize_input 解析。
-        // date/periods 由座位图时段选择器产生（无时段时省略，由任务流追问）
+        // 选座回传：混合通道 = taskId 路由 + JSON 载荷随隐藏消息文本。
+        // 只 sendToChat 不带路由时，JSON 无预约关键词 → 意图识别认领不了 → 被通用大模型接走
         const form = [
           { name: 'devName', value: payload.seat },
           { name: 'room', value: payload.room },
@@ -424,7 +428,23 @@
         if (payload.periods && payload.periods.length) {
           form.push({ name: 'periods', value: payload.periods.join(',') });
         }
-        sendToChat(JSON.stringify(form), true);
+        const json = JSON.stringify(form);
+        const taskId = TASK_ID_MAP['seat-reserve'];
+        if (taskId && !taskId.startsWith('TODO_REPLACE')) {
+          // 正式通道：setWsExtraData(taskId) + 200ms 后隐藏发送 JSON（taskInitParams 平台会清空，不放参数）
+          sendToCx(CXBOT.SET_EXTRA, {
+            taskId,
+            chatModel: 'APP',
+            taskInitParams: {},
+          });
+          setTimeout(() => {
+            sendToCx(CXBOT.SEND, { text: json, hidden: true });
+          }, 200);
+        } else {
+          // 降级通道：意图前缀 + JSON（normalize_input 容错提取 '[' 起的 JSON）
+          console.warn('[LibPanel] seat-reserve 未配置 taskId，降级为意图触发');
+          sendToChat('预约座位 ' + json, true);
+        }
         return;
       }
       case MSG.LOAD_IFRAME: {
