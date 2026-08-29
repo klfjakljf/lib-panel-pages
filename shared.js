@@ -325,8 +325,10 @@
     'timer-reserve': 'TODO_REPLACE_WITH_TIMER_RESERVE_TASK_ID',
     'timer-manage': 'TODO_REPLACE_WITH_TIMER_MANAGE_TASK_ID',
     'room-reserve': '164198',
-    'room-cancel': '164200',
-    'seat-cancel': '164201',
+    // 按用户 8-28 提供的名称对应：取消座位预约=164200、取消研讨室预约=164201
+    // （8-29 曾反向填写，如与平台实际不符请以任务流编辑 URL 的 taskId 为准对调）
+    'seat-cancel': '164200',
+    'room-cancel': '164201',
     'analysis': 'TODO_REPLACE_WITH_ANALYSIS_TASK_ID',
     'credit': 'TODO_REPLACE_WITH_CREDIT_TASK_ID',
     'chat': null, // chat 用语义触发，不需要 taskId
@@ -865,6 +867,14 @@
           desc: '组队预约研讨室',
           action: { type: 'trigger-task', flow: 'room-reserve' },
           fallback: { type: 'prompt', message: '请在对话框输入「约研讨室」开始组队预约' },
+        },
+        {
+          id: 'seat-cancel',
+          label: '取消预约',
+          icon: 'x',
+          desc: '查看并取消已有预约',
+          action: { type: 'trigger-task', flow: 'seat-cancel' },
+          fallback: { type: 'prompt', message: '请在对话框输入「取消预约」查看并取消已有预约' },
         },
       ],
     },

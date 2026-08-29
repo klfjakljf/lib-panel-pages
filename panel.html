@@ -54,28 +54,6 @@
     </div>
   </div>
 
-  <!-- 通知提示 -->
-  <div class="panel-section">
-    <div class="panel-section-title">通知</div>
-    <div class="card">
-      <div class="alert alert-info" id="nextRunAlert" style="margin-bottom: 8px; display:none;">
-        <span id="nextRunIcon"></span>
-        <div>
-          <div style="font-weight:600;">下次自动抢座</div>
-          <div id="nextRunText" style="opacity:0.8;">--</div>
-        </div>
-      </div>
-      <div class="list-item">
-        <span class="list-item-label">通知方式</span>
-        <span class="list-item-value">微信推送</span>
-      </div>
-      <div class="list-item">
-        <span class="list-item-label">抢座时间</span>
-        <span class="list-item-value">每日 06:15</span>
-      </div>
-    </div>
-  </div>
-
 </div>
 
 <script src="shared.js"></script>
@@ -423,13 +401,9 @@
   // 注意：字段是 tasks 不是 jobs；任务只有 id/kind/desc
   function renderTasks(resp) {
     const container = document.getElementById('taskList');
-    const alertEl = document.getElementById('nextRunAlert');
-    const alertText = document.getElementById('nextRunText');
-    const alertIcon = document.getElementById('nextRunIcon');
 
     // API 调用失败或未绑定
     if (!resp || resp.code !== 0) {
-      alertEl.style.display = 'none';
       const msg = resp ? (resp.msg || '查询失败') : '无法连接服务器';
       // 401 = 未绑定，显示友好提示
       if (resp && resp.code === 401) {
@@ -454,15 +428,6 @@
 
     // 后端返回 tasks 数组
     const tasks = resp.tasks || [];
-
-    // 更新下次执行提示
-    if (tasks.length > 0) {
-      alertEl.style.display = 'flex';
-      alertIcon.innerHTML = ICONS.clock;
-      alertText.textContent = `明日 06:15 自动执行（共 ${tasks.length} 个任务）`;
-    } else {
-      alertEl.style.display = 'none';
-    }
 
     if (tasks.length === 0) {
       container.innerHTML = `
