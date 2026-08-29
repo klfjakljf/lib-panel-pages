@@ -833,6 +833,15 @@
           fallback: { type: 'prompt', message: '请在对话框输入「看座位图」查看互动座位图' },
         },
         {
+          id: 'roommap',
+          label: '研讨室地图',
+          icon: 'door',
+          desc: '研讨室分布与实时余量',
+          // 语义触发：让超星在对话区加载研讨室地图 iframe（roommap.html）
+          action: { type: 'trigger-task', flow: 'chat', message: '看研讨室地图' },
+          fallback: { type: 'prompt', message: '请在对话框输入「看研讨室地图」查看研讨室分布与余量' },
+        },
+        {
           id: 'analysis',
           label: '态势分析',
           icon: 'chart',

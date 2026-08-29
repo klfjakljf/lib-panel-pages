@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>研讨室地图</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { background: #f5f7fa; padding: 8px; padding-bottom: 96px; }
+  .page-shell { max-width: 1200px; margin: 0 auto; }
+
+  .top-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .top-bar button { background: #3b82f6; color: #fff; border: 0; padding: 5px 10px; border-radius: 6px;
+                    cursor: pointer; font-size: 12px; }
+  .top-bar button:hover { background: #2563eb; }
+  .top-bar .status { margin-left: auto; font-size: 11px; color: #94a3b8; }
+
+  .rules { font-size: 11px; color: #64748b; background: #f8fafc; border: 1px dashed #e2e8f0;
+           border-radius: 6px; padding: 6px 10px; margin: 8px 0; line-height: 1.7; }
+  .rules b { color: #475569; }
+
+  /* 类型筛选行 */
+  .filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .fchip { padding: 4px 12px; font-size: 12px; color: #475569; background: #f1f5f9;
+           border: 1px solid #e2e8f0; border-radius: 999px; cursor: pointer; user-select: none; }
+  .fchip.on { background: #eff6ff; border-color: #2563eb; color: #1d4ed8; font-weight: 600; }
+
+  /* 分组区块 */
+  .group { background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+  .group-head { padding: 10px 12px 8px; border-bottom: 1px solid #f1f5f9; }
+  .group-title { font-size: 14px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .group-badge { font-size: 11px; font-weight: 400; color: #2563eb; background: #eff6ff;
+                 border-radius: 999px; padding: 2px 8px; }
+  .group-desc { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+  .tl-legend { font-size: 10px; color: #94a3b8; margin-top: 5px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tl-legend .sw { display: inline-block; width: 16px; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+  .room-grid { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; }
+
+  /* 房间卡片（行式：左侧房间信息 + 右侧全宽时间轴） */
+  .room-card { border: 1.5px solid #e4e7ec; border-radius: 8px; padding: 9px 12px; cursor: pointer;
+               background: #fff; transition: all 0.15s ease; position: relative;
+               display: flex; align-items: center; gap: 14px; }
+  .rc-left { flex: none; width: 168px; }
+  @media (max-width: 560px) {
+    .room-card { flex-direction: column; align-items: stretch; gap: 6px; }
+    .rc-left { width: auto; }
+  }
+  .room-card:hover { border-color: #93c5fd; }
+  .room-card.sel { border-color: #2563eb; background: #eff6ff; }
+  .room-card.full { opacity: 0.55; cursor: not-allowed; }
+  .room-card.full .room-name { text-decoration: line-through; color: #94a3b8; }
+  .room-card.conflict { border-color: #f59e0b; background: #fffbeb; }
+  .room-name { font-size: 13px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 6px; }
+  .room-kind { font-size: 10px; color: #fff; background: #64748b; border-radius: 4px; padding: 1px 5px; font-weight: 400; }
+  .kind-big { background: #7c3aed; }
+
+  /* 卡片内时间轴（右列全宽）：8:30 ─── 12:00 ∥午休∥ 13:30 ─── 21:30 */
+  .rc-tl { flex: 1; min-width: 0; }
+  .room-tl { position: relative; height: 16px; background: #f1f5f9; border-radius: 3px; overflow: hidden; }
+  .tl-lunch { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, #e2e8f0, #e2e8f0 3px, #f8fafc 3px, #f8fafc 6px); }
+  .tl-busy { position: absolute; top: 0; bottom: 0; background: #f87171; border-radius: 2px; }
+  .tl-sel { position: absolute; top: -1px; bottom: -1px; background: rgba(37, 99, 235, 0.25); border: 1.5px solid #2563eb; border-radius: 3px; }
+  .tl-now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #16a34a; }
+  /* 时刻刻度尺：整点刻度 + 逢 2 小时文字 */
+  .tl-scale { position: relative; height: 14px; margin-top: 2px; }
+  .tl-scale i { position: absolute; top: 0; width: 1px; height: 4px; background: #cbd5e1; }
+  .tl-scale span { position: absolute; top: 5px; transform: translateX(-50%); font-size: 10px;
+                   color: #94a3b8; white-space: nowrap; font-style: normal; }
+  .tl-scale b { position: absolute; top: 5px; font-size: 10px; color: #94a3b8; font-weight: 400; }
+  /* 已约时段文字（时间轴下方，直接读出几点） */
+  .busy-txt { font-size: 10px; color: #64748b; margin-top: 1px; line-height: 1.5; }
+  .busy-txt .bt-ok { color: #16a34a; }
+  .room-meta { font-size: 11px; color: #64748b; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .warn { color: #b45309; font-weight: 600; }
+
+  /* 我的研讨室预约 */
+  .myresv { background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+  .myresv-head { padding: 10px 12px 8px; border-bottom: 1px solid #f1f5f9;
+                 display: flex; align-items: center; gap: 8px; }
+  .myresv-title { font-size: 14px; font-weight: 600; color: #1e293b; }
+  .myresv-list { padding: 4px 12px 8px; }
+  .resv-item { display: flex; align-items: center; gap: 10px; padding: 7px 0;
+               border-bottom: 1px dashed #f1f5f9; font-size: 13px; }
+  .resv-item:last-child { border-bottom: 0; }
+  .resv-room { font-weight: 600; color: #1e293b; }
+  .resv-time { color: #64748b; font-size: 12px; }
+  .resv-cancel { margin-left: auto; background: #fff; color: #b91c1c; border: 1px solid #fecaca;
+                 border-radius: 6px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+  .resv-cancel:hover { background: #fef2f2; }
+  .resv-cancel:disabled { color: #9ca3af; border-color: #e5e7eb; cursor: not-allowed; }
+
+  /* 底部操作栏（常驻） */
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 14px 14px 0 0;
+         box-shadow: 0 -4px 20px #0002; padding: 10px 14px; z-index: 20; }
+  .bar-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; color: #334155; }
+  #selRooms { flex: 1; min-width: 200px; font-size: 12px; color: #2563eb; min-height: 18px; }
+  #selRooms .ph { color: #94a3b8; }
+  .day-chip { padding: 4px 12px; font-size: 12px; color: #475569; background: #f1f5f9;
+              border: 1px solid #e2e8f0; border-radius: 999px; cursor: pointer; user-select: none; }
+  .day-chip.on { background: #eff6ff; border-color: #2563eb; color: #1d4ed8; font-weight: 600; }
+  .day-chip .dw { color: #94a3b8; font-weight: 400; margin-left: 4px; font-size: 11px; }
+  .day-chip.on .dw { color: #3b82f6; }
+  #bar select { padding: 5px 6px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 12px; background: #fff; }
+  #memberIn { flex: 1; min-width: 160px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px;
+              font-size: 12px; }
+  #submitBtn { margin-top: 8px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
+               background: #2563eb; color: #fff; font-size: 14px; cursor: pointer; }
+  #submitBtn:disabled { background: #9ca3af; cursor: not-allowed; }
+  #result { font-size: 12px; margin-top: 6px; line-height: 1.6; white-space: pre-wrap; display: none;
+            border-radius: 6px; padding: 6px 8px; }
+  #result.ok { display: block; color: #16a34a; background: #f0fdf4; }
+  #result.err { display: block; color: #b91c1c; background: #fef2f2; }
+
+  .state-view { display: none; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px;
+                padding: 28px 16px; text-align: center; }
+  .state-view h3 { font-size: 15px; color: #1e293b; margin-bottom: 8px; }
+  .state-view p { font-size: 13px; color: #64748b; line-height: 1.6; margin-bottom: 14px; }
+  .state-view button { background: #2563eb; color: #fff; border: 0; padding: 9px 22px;
+                       border-radius: 8px; font-size: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div class="page-shell">
+
+<div class="top-bar">
+  <button onclick="forceRefresh()">刷新</button>
+  <button onclick="goFullscreen()">全屏查看</button>
+  <span class="status" id="testStatus">加载中...</span>
+</div>
+
+<div class="rules">
+  <b>开放 8:30–21:30（午休 12:00–13:30 不可约）｜单次 60–240 分钟｜可约今天起 3 天内</b><br>
+  分类：研讨间｜低音研讨室｜<span style="color:#7c3aed">沁园春为大型会议间</span>。
+  卡片时间轴：红色=已约，斜纹=午休，绿线=当前时刻；选定时段后蓝色框落在红色上=该时段已被占。点击房间卡片选中（单选）。
+</div>
+
+<div class="filter-row" id="filterRow">
+  <div class="fchip on" data-k="all" onclick="setKindFilter('all')">全部</div>
+  <div class="fchip" data-k="研讨间" onclick="setKindFilter('研讨间')">研讨间</div>
+  <div class="fchip" data-k="低音" onclick="setKindFilter('低音')">低音研讨室</div>
+  <div class="fchip" data-k="学习室" onclick="setKindFilter('学习室')">学习室</div>
+  <div class="fchip" data-k="静思间" onclick="setKindFilter('静思间')">静思间</div>
+  <div class="fchip" data-k="会议间" onclick="setKindFilter('会议间')">大型会议间</div>
+</div>
+
+<!-- 我的研讨室预约（有预约时才显示） -->
+<div class="myresv" id="myresv" style="display:none">
+  <div class="myresv-head">
+    <div class="myresv-title">我的研讨室预约</div>
+    <span class="group-badge" id="myresvCnt"></span>
+  </div>
+  <div class="myresv-list" id="myresvList"></div>
+</div>
+
+<div id="groups"></div>
+
+<!-- 未绑定引导 -->
+<div class="state-view" id="unboundView">
+  <h3>尚未绑定图书馆账号</h3>
+  <p>查看研讨室实时占用情况需要先绑定账号。<br>点击下方按钮，按对话提示完成绑定。</p>
+  <button onclick="LibPanel.triggerFlow('bind')">去绑定账号</button>
+</div>
+
+<!-- 加载失败 -->
+<div class="state-view" id="errorView">
+  <h3>加载失败</h3>
+  <p id="errMsg"></p>
+  <button onclick="init()">重试</button>
+</div>
+
+</div><!-- /page-shell -->
+
+<div id="bar">
+  <div class="bar-row">
+    <span style="font-size:12px;color:#64748b;">已选：</span>
+    <div id="selRooms"><span class="ph">点击房间卡片选中</span></div>
+  </div>
+  <div class="bar-row" style="margin-top:6px;">
+    <div class="day-chip on" id="day0" onclick="setDay(0)"></div>
+    <div class="day-chip" id="day1" onclick="setDay(1)"></div>
+    <div class="day-chip" id="day2" onclick="setDay(2)"></div>
+  </div>
+  <div class="bar-row" style="margin-top:6px;">
+    开始 <select id="selStart"></select>
+    结束 <select id="selEnd"></select>
+  </div>
+  <div class="bar-row" style="margin-top:6px;">
+    <input id="memberIn" placeholder="同行学号（逗号分隔，可留空）">
+    <span id="memCnt" style="font-size:11px;color:#94a3b8;">1 人</span>
+  </div>
+  <div id="result"></div>
+  <button id="submitBtn" onclick="submitReserve()">预约选中的研讨室</button>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const { apiGet, apiPost, triggerFlow, requestIframeFullscreen, resizeIframe } = window.LibPanel;
+
+// ---------- IC 空间规则常量（2026-08-29 官网核查）----------
+const OPEN = 8 * 60 + 30, CLOSE = 21 * 60 + 30;   // 开放 8:30-21:30
+const LUNCH_S = 12 * 60, LUNCH_E = 13 * 60 + 30;   // 午休 12:00-13:30
+const MIN_DUR = 60, MAX_DUR = 240, STEP = 30;
+const SPAN = CLOSE - OPEN;  // 780 分钟
+
+// 分组位置文案（8-29 OCR 实测：一楼学习共享 / 五楼广州文献两大区域）
+const GROUP_DESC = [
+  { k: '一楼', desc: '图书馆一楼学习共享空间（IC 空间）：低音研讨室 C03–C06、研讨间 C/E 系列、学习室、静思间' },
+  { k: '五楼', desc: '图书馆五楼广州文献资源中心内：学士吟、朝天乐、清和风、江如练、浣溪沙、沁园春 六间研讨间（沁园春为大型会议间）' },
+  { k: '四楼', desc: '位于图书馆四楼' },
+  { k: '二楼', desc: '位于图书馆二楼' },
+];
+
+// 房间类型（人数限制信息待用户提供后再补充；仅区分类型标签）
+function roomKind(name) {
+  if (/沁园春/.test(name)) return { label: '大型会议间', big: true };
+  if (/^(学士吟|朝天乐|朝天子|清和风|江如练|浣溪沙)/.test(name)) return { label: '研讨间', big: false };
+  if (/^低音研讨室/.test(name)) return { label: '低音研讨室', big: false };
+  if (/^学习室/.test(name)) return { label: '学习室', big: false };
+  if (/^静思间/.test(name)) return { label: '静思间', big: false };
+  if (/^研讨间/.test(name)) return { label: '研讨间', big: false };
+  if (/^研讨室\d/.test(name)) return { label: '研讨间', big: false };
+  return { label: '研讨间', big: false };
+}
+
+let tree = [];            // [{name, desc, rooms:[{name,total,remain}]}]
+let picked = new Set();   // 已选房间（单选，最多 1 间）
+let pickDay = 0;
+let kindFilter = 'all';  // 类型筛选
+let myResv = [];          // 我的研讨室预约
+let slotsByRoom = {};    // {房间名: [[begin,end],...]} 当日已约时段
+let slotsOk = false;      // 时段接口是否可用
+
+// 类型筛选归类（与角标体系一致；仅沁园春算会议间）
+function kindKey(name) {
+  const k = roomKind(name);
+  if (k.big) return '会议间';
+  if (/^低音/.test(name)) return '低音';
+  if (/^学习室/.test(name)) return '学习室';
+  if (/^静思间/.test(name)) return '静思间';
+  return '研讨间';
+}
+function setKindFilter(k) {
+  kindFilter = k;
+  document.querySelectorAll('#filterRow .fchip').forEach(c => c.classList.toggle('on', c.dataset.k === k));
+  render();
+}
+
+function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
+function toHHMM(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+// 时间 → 时间轴百分比
+function pct(t) { return ((t - OPEN) / SPAN) * 100; }
+
+// ---------- 视图 ----------
+function showUnbound() {
+  document.getElementById('unboundView').style.display = 'block';
+  document.getElementById('groups').style.display = 'none';
+  document.getElementById('filterRow').style.display = 'none';
+  document.getElementById('myresv').style.display = 'none';
+  document.getElementById('testStatus').textContent = '未绑定';
+}
+function showError(msg) {
+  document.getElementById('errMsg').textContent = msg || '请稍后重试';
+  document.getElementById('errorView').style.display = 'block';
+  document.getElementById('groups').style.display = 'none';
+  document.getElementById('filterRow').style.display = 'none';
+  document.getElementById('myresv').style.display = 'none';
+  document.getElementById('testStatus').textContent = '加载失败';
+}
+
+// ---------- 归一化 /api/rooms?type=room 树 ----------
+// 树可能带校区层 → 下钻大学城；叶子=房间（total/remain），父链作分组名
+function normalizeTree(raw) {
+  let t = raw || [];
+  if (t.length && t.some(x => (x.name || '').includes('校区'))) {
+    const dxc = t.find(x => (x.name || '').includes('大学城')) || t[0];
+    t = (dxc && dxc.children) || [];
+  }
+  const groups = [];
+  const walk = (nodes, chain) => {
+    for (const n of nodes || []) {
+      const kids = n.children || [];
+      if (kids.length) {
+        walk(kids, chain.concat(n.name));
+      } else {
+        const name = String(n.name || '').trim();
+        if (!name) continue;
+        let gname = chain[chain.length - 1] || '其他';
+        let g = groups.find(g => g.name === gname);
+        if (!g) { g = { name: gname, rooms: [] }; groups.push(g); }
+        g.rooms.push({ name, total: n.total || 0, remain: n.remain || 0 });
+      }
+    }
+  };
+  walk(t, []);
+  for (const g of groups) {
+    const hit = GROUP_DESC.find(d => g.name.includes(d.k));
+    g.desc = hit ? hit.desc : '';
+    g.rooms.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  }
+  // 含"一楼/五楼"的组排前
+  groups.sort((a, b) => {
+    const order = s => /一楼/.test(s) ? 0 : /五楼/.test(s) ? 1 : /四楼/.test(s) ? 2 : 3;
+    return order(a.name) - order(b.name);
+  });
+  return groups;
+}
+
+// ---------- 渲染 ----------
+// 已选时段（开始/结束下拉有值时）与房间已约时段是否冲突
+function selPeriod() {
+  const s = document.getElementById('selStart').value;
+  const e = document.getElementById('selEnd').value;
+  return (s && e) ? [s, e] : null;
+}
+function conflictWith(name, period) {
+  if (!period) return false;
+  const [sb, se] = period.map(toMin);
+  return (slotsByRoom[name] || []).some(([b, e]) => toMin(b) < se && sb < toMin(e));
+}
+
+function tlHtml(name) {
+  const busy = slotsByRoom[name] || [];
+  const lunchL = pct(LUNCH_S), lunchW = pct(LUNCH_E) - lunchL;
+  let busyHtml = busy.map(([b, e]) =>
+    `<div class="tl-busy" style="left:${pct(toMin(b))}%;width:${pct(toMin(e)) - pct(toMin(b))}%"></div>`).join('');
+  // 已选时段高亮框
+  const p = selPeriod();
+  let selHtml = '';
+  if (p) {
+    const l = pct(toMin(p[0])), w = pct(toMin(p[1])) - l;
+    selHtml = `<div class="tl-sel" style="left:${l}%;width:${w}%"></div>`;
+  }
+  // 今天当前时刻绿线
+  let nowHtml = '';
+  if (pickDay === 0) {
+    const now = new Date().getHours() * 60 + new Date().getMinutes();
+    if (now > OPEN && now < CLOSE) nowHtml = `<div class="tl-now" style="left:${pct(now)}%"></div>`;
+  }
+  const title = busy.length
+    ? `08:30──21:30｜已约：${busy.map(([b, e]) => `${b}-${e}`).join('、')}`
+    : '08:30──21:30｜全天空闲';
+  return `<div class="room-tl" title="${escapeHtml(title)}">
+    <div class="tl-lunch" style="left:${lunchL}%;width:${lunchW}%"></div>${busyHtml}${selHtml}${nowHtml}</div>`;
+}
+
+// 时刻刻度尺：整点短刻度 + 10:00~20:00 逢 2 小时文字 + 两端边界
+function tlScale() {
+  let ticks = '';
+  for (let t = OPEN + 60; t < CLOSE; t += 60) {
+    ticks += `<i style="left:${pct(t)}%"></i>`;
+  }
+  let labels = '';
+  for (let h = 10; h <= 20; h += 2) {
+    labels += `<span style="left:${pct(h * 60)}%">${h}:00</span>`;
+  }
+  return `<div class="tl-scale">${ticks}${labels}<b style="left:0">8:30</b><b style="right:0">21:30</b></div>`;
+}
+
+// 已约时段文字（时间轴下方直接读出几点；无已约显示"空闲"）
+function busyText(name) {
+  if (!slotsOk) return '';
+  const busy = slotsByRoom[name] || [];
+  if (!busy.length) return `<div class="busy-txt"><span class="bt-ok">今日空闲</span></div>`;
+  return `<div class="busy-txt">已约：${busy.map(([b, e]) => `${b}–${e}`).join('、')}</div>`;
+}
+
+function render() {
+  const host = document.getElementById('groups');
+  host.style.display = '';
+  let html = '';
+  for (const g of tree) {
+    const rooms = kindFilter === 'all' ? g.rooms : g.rooms.filter(r => kindKey(r.name) === kindFilter);
+    if (!rooms.length) continue;  // 筛选后空分组不渲染
+    html += `<div class="group"><div class="group-head">
+      <div class="group-title">${escapeHtml(g.name)}
+        <span class="group-badge">${rooms.length} 间</span></div>
+      ${g.desc ? `<div class="group-desc">${escapeHtml(g.desc)}</div>` : ''}
+      <div class="tl-legend">
+        <span><span class="sw" style="background:#f87171"></span>已约</span>
+        <span><span class="sw" style="background:repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#f8fafc 3px,#f8fafc 6px)"></span>午休 12:00–13:30</span>
+        <span>时间轴 8:30 ─ 21:30${slotsOk ? '' : '（时段数据暂不可用）'}</span>
+      </div></div>
+      <div class="room-grid">`;
+    for (const r of rooms) {
+      const kind = roomKind(r.name);
+      const full = r.total > 0 && r.remain <= 0;
+      const period = selPeriod();
+      const conf = conflictWith(r.name, period);
+      const cls = ['room-card', picked.has(r.name) ? 'sel' : '',
+                   full ? 'full' : '', conf && !full ? 'conflict' : ''].join(' ').trim();
+      const warnHtml = conf ? `<span class="warn">⚠时段冲突</span>` : '';
+      html += `<div class="${cls}" onclick="toggleRoom('${r.name.replace(/'/g, "\\'")}')">
+        <div class="rc-left">
+          <div class="room-name">${escapeHtml(r.name)}
+            <span class="room-kind ${kind.big ? 'kind-big' : ''}">${kind.label}</span></div>
+          <div class="room-meta">${warnHtml}</div>
+        </div>
+        <div class="rc-tl">${tlHtml(r.name)}${tlScale()}${busyText(r.name)}</div>
+      </div>`;
+    }
+    html += '</div></div>';
+  }
+  host.innerHTML = html;
+  renderSelRooms();
+  updateMemCnt();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toggleRoom(name) {
+  // 单选：再次点击取消，点击新房间替换旧选择
+  picked = picked.has(name) ? new Set() : new Set([name]);
+  render();
+}
+
+function renderSelRooms() {
+  const el = document.getElementById('selRooms');
+  el.innerHTML = picked.size
+    ? [...picked].map(escapeHtml).join('、')
+    : '<span class="ph">点击房间卡片选中</span>';
+}
+
+// ---------- 时段下拉（午休硬约束：上午段 ≤12:00，下午段 ≥13:30）----------
+function buildStart() {
+  const selStart = document.getElementById('selStart');
+  const nowMin = pickDay === 0 ? (new Date().getHours() * 60 + new Date().getMinutes()) : -1;
+  const latestStart = CLOSE - MIN_DUR;
+  let html = '', first = '';
+  for (let t = OPEN; t <= latestStart; t += STEP) {
+    // 排除落在午休内的开始时刻（12:00-13:00 之间无法开始）
+    if (t > LUNCH_S && t < LUNCH_E) continue;
+    const ok = t >= nowMin;
+    html += `<option value="${toHHMM(t)}"${ok ? '' : ' disabled'}>${toHHMM(t)}</option>`;
+    if (ok && first === '') first = toHHMM(t);
+  }
+  selStart.innerHTML = html || '<option value="">无可约时刻</option>';
+  selStart.value = first || '';
+  buildEnd();
+}
+
+function buildEnd() {
+  const selStart = document.getElementById('selStart');
+  const selEnd = document.getElementById('selEnd');
+  if (!selStart.value) { selEnd.innerHTML = ''; render(); return; }
+  const s = toMin(selStart.value);
+  // 段硬顶 = min(240min, 闭馆, 午休起点[若在上午段])
+  let hard = Math.min(s + MAX_DUR, CLOSE);
+  if (s < LUNCH_S) hard = Math.min(hard, LUNCH_S);
+  let html = '';
+  for (let t = s + MIN_DUR; t <= hard; t += STEP) {
+    if (t > LUNCH_S && t < LUNCH_E + MIN_DUR && s < LUNCH_S) continue; // 上午段不跨午休
+    html += `<option value="${toHHMM(t)}">${toHHMM(t)}</option>`;
+  }
+  selEnd.innerHTML = html || '<option value="">无可选结束时刻</option>';
+  if (selEnd.options.length) selEnd.value = selEnd.options[selEnd.options.length - 1].value;
+  render();  // 时段变化 → 时间轴高亮/冲突标记联动
+}
+document.getElementById('selStart').onchange = buildEnd;
+
+// ---------- 日期（chip 显示「今天 8/30 周六」）----------
+const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+function dayDate(d) {
+  const dt = new Date();
+  dt.setDate(dt.getDate() + d);
+  return dt;
+}
+function renderDayChips() {
+  const labels = ['今天', '明天', '后天'];
+  for (let i = 0; i < 3; i++) {
+    const dt = dayDate(i);
+    const el = document.getElementById('day' + i);
+    el.innerHTML = `${labels[i]} ${dt.getMonth() + 1}/${dt.getDate()}<span class="dw">${WEEK[dt.getDay()]}</span>`;
+    el.classList.toggle('on', i === pickDay);
+  }
+}
+function ymdOf(d) {
+  const dt = dayDate(d);
+  return `${dt.getFullYear()}${String(dt.getMonth() + 1).padStart(2, '0')}${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+// 当日已约时段（切日期时重取）
+async function loadSlots() {
+  slotsOk = false;
+  slotsByRoom = {};
+  try {
+    const resp = await apiGet('/api/room/slots', { date: ymdOf(pickDay) });
+    if (resp && resp.code === 0 && resp.slots) {
+      slotsByRoom = resp.slots;
+      slotsOk = true;
+    }
+  } catch (e) { /* 时段接口不可用：时间轴仅显示午休/框架 */ }
+  render();
+}
+
+function setDay(d) {
+  pickDay = d;
+  renderDayChips();
+  buildStart();
+  loadSlots();
+}
+
+// ---------- 成员 ----------
+function updateMemCnt() {
+  const n = getMembers().length + 1;
+  const el = document.getElementById('memCnt');
+  el.textContent = n + ' 人';
+  el.style.color = '#94a3b8';
+}
+function getMembers() {
+  return document.getElementById('memberIn').value
+    .split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean);
+}
+document.getElementById('memberIn').oninput = updateMemCnt;
+
+// ---------- 提交 ----------
+async function submitReserve() {
+  const btn = document.getElementById('submitBtn');
+  const resultEl = document.getElementById('result');
+  resultEl.className = ''; resultEl.style.display = 'none';
+  if (!picked.size) { showResult('err', '请先选择研讨室'); return; }
+  const selStart = document.getElementById('selStart');
+  const selEnd = document.getElementById('selEnd');
+  if (!selStart.value || !selEnd.value) { showResult('err', '无可约时段'); return; }
+
+  const date = ymdOf(pickDay);
+  const period = `${selStart.value}-${selEnd.value}`;
+  // 冲突提示（不阻断——时段数据有延迟可能，以提交结果为准）
+  const confRooms = [...picked].filter(n => conflictWith(n, [selStart.value, selEnd.value]));
+
+  btn.disabled = true; btn.textContent = '提交中...';
+  try {
+    const resp = await apiPost('/api/room/reserve', {
+      rooms: [...picked],
+      date,
+      periods: [period],
+      members: getMembers(),
+    });
+    if (resp && resp.code === 0 && resp.ok) {
+      showResult('ok', resp.msg || '预约成功');
+      picked.clear();  // 成功后清空已选，防误触重复预约
+      setTimeout(forceRefresh, 1200);  // 刷新房间列表 + 时段 + 我的预约
+    } else {
+      showResult('err', (resp && resp.msg) || '预约失败，请稍后重试');
+    }
+  } catch (e) {
+    showResult('err', '网络错误：' + (e.message || e));
+  } finally {
+    btn.disabled = false; btn.textContent = '预约选中的研讨室';
+  }
+}
+
+function showResult(cls, msg) {
+  const el = document.getElementById('result');
+  el.textContent = msg;
+  el.className = cls;
+  el.style.display = '';  // 清除 submitReserve 设置的内联 display:none（内联样式优先级高于 .ok/.err 类）
+}
+
+// ---------- 我的研讨室预约（/api/reservations 含座位+研讨室，按房间名过滤）----------
+const ROOM_RESV_RE = /^(研讨间|研讨室|低音研讨室|学习室|静思间|学士吟|朝天乐|朝天子|清和风|江如练|浣溪沙|沁园春)/;
+
+async function loadMyResv() {
+  try {
+    const resp = await apiGet('/api/reservations', {});
+    // 静默失败：查询失败不影响房间列表主视图
+    if (!resp || resp.code !== 0) return;
+    myResv = (resp.reservations || []).filter(it => ROOM_RESV_RE.test(it.seat || ''));
+  } catch (e) { return; }
+  renderMyResv();
+}
+
+function renderMyResv() {
+  const box = document.getElementById('myresv');
+  const list = document.getElementById('myresvList');
+  if (!myResv.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  document.getElementById('myresvCnt').textContent = myResv.length + ' 条';
+  list.innerHTML = myResv.map(it => `
+    <div class="resv-item">
+      <span class="resv-room">${escapeHtml(it.seat)}</span>
+      <span class="resv-time">${escapeHtml(it.begin)} - ${escapeHtml(it.end)}</span>
+      <button class="resv-cancel" id="cx-${it.resvId}" onclick="cancelResv('${it.resvId}')">取消</button>
+    </div>`).join('');
+}
+
+async function cancelResv(resvId) {
+  const btn = document.getElementById('cx-' + resvId);
+  if (btn) { btn.disabled = true; btn.textContent = '取消中...'; }
+  try {
+    const resp = await apiPost('/api/cancel', { target: String(resvId) });
+    if (resp && resp.code === 0) {
+      showResult('ok', `已取消预约（${resvId}）`);
+    } else {
+      showResult('err', (resp && resp.msg) || '取消失败，请稍后重试');
+      if (btn) { btn.disabled = false; btn.textContent = '取消'; }
+      return;
+    }
+  } catch (e) {
+    showResult('err', '网络错误：' + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = '取消'; }
+    return;
+  }
+  // 取消成功：刷新我的预约与房间列表
+  await loadMyResv();
+  setTimeout(forceRefresh, 600);
+}
+
+// ---------- 加载 ----------
+async function init() {
+  document.getElementById('testStatus').textContent = '加载中...';
+  document.getElementById('unboundView').style.display = 'none';
+  document.getElementById('errorView').style.display = 'none';
+  document.getElementById('groups').style.display = '';
+  document.getElementById('filterRow').style.display = '';
+  try {
+    const resp = await apiGet('/api/rooms', { type: 'room' });
+    if (resp && resp.code === 401) { showUnbound(); return; }
+    if (!resp || resp.code !== 0) { showError(resp && resp.msg); return; }
+    tree = normalizeTree(resp.tree);
+    if (!tree.length) { showError('未获取到研讨室数据'); return; }
+    render();
+    renderDayChips();
+    buildStart();
+    document.getElementById('testStatus').textContent =
+      `${tree.reduce((s, g) => s + g.rooms.length, 0)} 间研讨室`;
+    loadSlots();     // 当日已约时段（时间轴数据）
+    loadMyResv();    // 我的预约（静默，未绑定时自动跳过）
+  } catch (e) {
+    if (e && (e.status === 401 || String(e.message).includes('401'))) { showUnbound(); return; }
+    showError(e.message || '网络错误');
+  }
+}
+
+function forceRefresh() { init(); }
+function goFullscreen() { if (requestIframeFullscreen) requestIframeFullscreen(); }
+
+renderDayChips();
+init();
+</script>
+</body>
+</html>
