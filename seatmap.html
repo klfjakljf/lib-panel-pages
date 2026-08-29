@@ -113,9 +113,14 @@
 
   /* 座位预约时间轴（对齐官网：横条可视化占用） */
   .tl-label { font-size: 12px; color: #475569; margin-bottom: 4px; }
-  .tl { position: relative; height: 16px; border-radius: 4px; background: #dcfce7; margin: 4px 0 2px; overflow: hidden; }
-  .tl .seg { position: absolute; top: 0; bottom: 0; background: #ef4444; }
+  .tl { position: relative; height: 16px; border-radius: 4px; background: #dcfce7; margin: 4px 0 2px; }
+  .tl .seg { position: absolute; top: 0; bottom: 0; background: #ef4444; z-index: 2; }
+  .tl .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,0.12); z-index: 1; }
+  .tl .tick.hour { background: rgba(0,0,0,0.22); }
   .tl-ends { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
+  .tl-ticks { position: relative; height: 13px; margin-top: 1px; }
+  .tl-ticks span { position: absolute; transform: translateX(-50%); font-size: 9px; color: #94a3b8; line-height: 13px; }
+  .tl-slots { font-size: 11px; color: #b91c1c; margin: 3px 0 0; line-height: 1.6; }
   .tl-legend { font-size: 11px; color: #64748b; margin: 2px 0 6px; }
   .tl-legend i { display: inline-block; width: 12px; height: 8px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: -1px; }
 
@@ -200,6 +205,8 @@
   <div class="tl-label">座位预约时间</div>
   <div class="tl" id="pTimeline"></div>
   <div class="tl-ends" id="tlEnds"></div>
+  <div class="tl-ticks" id="tlTicks"></div>
+  <div class="tl-slots" id="tlSlots"></div>
   <div class="tl-legend"><i style="background:#ef4444"></i>已约<i style="background:#dcfce7;border:1px solid #d1d5db"></i>可预约</div>
   <div class="rules">预约规则：当日开放 08:30–22:15；提前预约范围 0–1 天；单次预约时长 60–240 分钟。</div>
   <div class="day-row">
@@ -506,7 +513,11 @@ async function onRoom() {
 
   // 守卫：快速切换房间时丢弃过期响应，避免旧房间数据覆盖当前房间
   const reqRoom = roomId;
-  const r = await api('/api/seatmap/snapshot', { roomId });
+  // 切房间重置为今天（房间切换与日期 chips 独立，新房间从今天的占用看起）
+  pickDay = 0;
+  document.getElementById('dayToday').classList.add('on');
+  document.getElementById('dayTomorrow').classList.remove('on');
+  const r = await api('/api/seatmap/snapshot', { roomId, day: 0 });
   if (curRoom !== reqRoom) return;  // 已切到其他房间/视图
   if (r.code === 401 || r.code === 403) {
     document.getElementById('testStatus').textContent = '凭证失效';
@@ -519,6 +530,7 @@ async function onRoom() {
     return;
   }
   roomSeats = r.seats || [];
+  roomSeatsDay = 0;
   if (window._missingRoomImg) {
     // 缺图：不渲染座位（防止坐标系错配满屏乱点），仅提示
     document.getElementById('overlay').innerHTML = '';
@@ -536,17 +548,35 @@ async function onRoom() {
   updateBreadcrumb();
 }
 
-async function loadRoomSeats() {
+// roomSeatsDay：当前 roomSeats 数据所属日期（0今天/1明天）。
+// 面板里 pick() 持有的座位对象 s 是旧数组引用，轮询/切日期整体替换数组后
+// 必须重新取引用并刷新面板，否则时间轴与下拉停留在旧数据
+let roomSeatsDay = 0;
+
+async function loadRoomSeats(day) {
   if (!curRoom) return;
+  if (day === undefined) day = pickDay;
   const reqRoom = curRoom;
-  const r = await api('/api/seatmap/snapshot', { roomId: curRoom, _t: Date.now() });
-  if (curRoom !== reqRoom) return;  // 定时器响应回来时已切走，丢弃
+  const reqDay = day;
+  const r = await api('/api/seatmap/snapshot', { roomId: curRoom, day: day, _t: Date.now() });
+  // 守卫：响应回来时已切房间或切日期，丢弃（防旧数据覆盖）
+  if (curRoom !== reqRoom || pickDay !== reqDay) return;
   if (r.code !== 0) return;
   roomSeats = r.seats || [];
+  roomSeatsDay = day;
   const occ = roomSeats.filter(s => s.state === 1 || s.state === 2 || s.state === 3).length;
-  document.getElementById('occ').textContent = `占用 ${occ}/${roomSeats.length}`;
+  const dayText = day === 1 ? '明日' : '';
+  document.getElementById('occ').textContent = `${dayText}占用 ${occ}/${roomSeats.length}`;
   document.getElementById('updated').textContent = '更新于 ' + (r.updatedAt || '');
   renderSeats();
+  // 面板打开时同步刷新时间轴/时段下拉（重新取座位引用）
+  if (sel && document.getElementById('panel').style.display === 'block') {
+    const s = roomSeats.find(x => x.name === sel);
+    if (s) {
+      renderTimeline(s);
+      renderPeriodPicker(s);
+    }
+  }
 }
 
 // ──────────── 渲染 ────────────
@@ -603,18 +633,49 @@ function seatOpen(s) {
 }
 
 // ── 座位预约时间轴（横条：红=已约，绿底=可约）──
+// v2：整点主刻度 + 半点次刻度 + 整点数字标尺 + 恢复已约时段数字显示
 function renderTimeline(s) {
   const [os, oe] = seatOpen(s);
-  const total = toMin(oe) - toMin(os);
+  const o0 = toMin(os), o1 = toMin(oe);
+  const total = o1 - o0;
   const tl = document.getElementById('pTimeline');
   let html = '';
+  // 半小时次刻度（浅）
+  for (let t = o0 - (o0 % 30) + 30; t < o1; t += 30) {
+    const pct = ((t - o0) / total) * 100;
+    html += `<div class="tick" style="left:${pct}%"></div>`;
+  }
+  // 整点主刻度（深）
+  for (let t = o0 - (o0 % 60) + 60; t < o1; t += 60) {
+    const pct = ((t - o0) / total) * 100;
+    html += `<div class="tick hour" style="left:${pct}%"></div>`;
+  }
+  // 已约段（最上层）
   (s.slots || []).forEach(([a, b]) => {
-    const l = ((toMin(a) - toMin(os)) / total) * 100;
+    const l = ((toMin(a) - o0) / total) * 100;
     const w = ((toMin(b) - toMin(a)) / total) * 100;
     if (w > 0) html += `<div class="seg" style="left:${l}%;width:${w}%" title="已约 ${a} ~ ${b}"></div>`;
   });
   tl.innerHTML = html;
   document.getElementById('tlEnds').innerHTML = `<span>${os}</span><span>${oe}</span>`;
+  // 整点数字标尺（首尾两端由 tlEnds 展示，避免重叠：从首个整点起标）
+  const ticksEl = document.getElementById('tlTicks');
+  if (ticksEl) {
+    let th = '';
+    for (let t = o0 - (o0 % 60) + 60; t < o1 - 20; t += 60) {
+      const pct = ((t - o0) / total) * 100;
+      th += `<span style="left:${pct}%">${toHHMM(t).slice(0, 2)}</span>`;
+    }
+    ticksEl.innerHTML = th;
+  }
+  // 恢复已约时段数字显示（当前 pickDay 日期对应的数据）
+  const slotsEl = document.getElementById('tlSlots');
+  if (slotsEl) {
+    const sl = s.slots || [];
+    slotsEl.innerHTML = sl.length
+      ? '已约时段：' + sl.map(([a, b]) => `${a}-${b}`).join('、')
+      : `${pickDay === 1 ? '明天' : '今天'}暂无预约，全程可约`;
+  }
 }
 
 // ── 双下拉时段选择（对齐官网范式：开始+结束，约束前置）──
@@ -679,18 +740,23 @@ function validatePeriod(s) {
   return { ok: true, start: selStart.value, end: selEnd.value };
 }
 
-// 日期 chips 切换：重渲染时段下拉（明天解除"已过时刻"约束），时间轴占用仅供参考
-function setPickDay(d) {
+// 日期 chips 切换：重拉对应日期的占用快照（FC seat_list 的 resvDates 支持指定日期），
+// 时间轴/时段下拉/占用统计全部随日期切换刷新
+async function setPickDay(d) {
   if (pickDay === d) return;
   pickDay = d;
   document.getElementById('dayToday').classList.toggle('on', d === 0);
   document.getElementById('dayTomorrow').classList.toggle('on', d === 1);
-  const s = roomSeats.find(x => x.name === sel);
-  if (!s) return;
-  document.querySelector('.tl-label').textContent = d === 1 ? '座位预约时间（明天，占用仅供参考）' : '座位预约时间';
+  document.querySelector('.tl-label').textContent = d === 1 ? '座位预约时间（明天）' : '座位预约时间';
   document.getElementById('pErr').textContent = '';
   document.getElementById('pFree').textContent = '';
-  renderPeriodPicker(s);
+  // 先用现有引用立即重渲染下拉（解除/恢复"已过时刻"约束），同时拉取新日期数据
+  const s0 = roomSeats.find(x => x.name === sel);
+  if (s0) renderPeriodPicker(s0);
+  if (d === 1 && roomSeatsDay === 1) return;  // 已是明天数据
+  if (d === 0 && roomSeatsDay === 0) return;  // 已是今天数据
+  document.getElementById('tlSlots').textContent = '加载中...';
+  await loadRoomSeats(d);
 }
 
 function pick(name) {
@@ -698,10 +764,11 @@ function pick(name) {
   const s = roomSeats.find(x => x.name === name);
   if (!s) return;
   renderSeats();
-  // 每次选座重置为"今天"
+  // 每次选座重置为"今天"；若当前数据是明天的，需重拉今天占用
   pickDay = 0;
   document.getElementById('dayToday').classList.add('on');
   document.getElementById('dayTomorrow').classList.remove('on');
+  if (roomSeatsDay === 1) loadRoomSeats(0);
   // 开放时间：起止相同视为全天（101/1E/111 等房间系统返回 08:00~08:00）
   let openText = `开放 ${OPEN_DEFAULT[0]}-${OPEN_DEFAULT[1]}`;
   if (s.open && s.open[0] && s.open[1] && s.open[0] !== s.open[1]) {
