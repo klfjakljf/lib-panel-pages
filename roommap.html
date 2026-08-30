@@ -132,7 +132,7 @@
 
 <div class="rules">
   <b>开放 8:30–21:30（午休 12:00–13:30 不可约）｜单次 60–240 分钟｜可约今天起 3 天内</b><br>
-  分类：研讨间｜低音研讨室｜<span style="color:#7c3aed">沁园春为大型会议间</span>。
+  各房间人数要求见卡片标签（如「4-5人」需 4 至 5 人，「2人」须恰好 2 人）；<span style="color:#7c3aed">沁园春为大型会议间 5-20 人</span>。
   卡片时间轴：红色=已约，斜纹=午休，绿线=当前时刻；选定时段后蓝色框落在红色上=该时段已被占。点击房间卡片选中（单选）。
 </div>
 
@@ -212,16 +212,37 @@ const GROUP_DESC = [
   { k: '二楼', desc: '位于图书馆二楼' },
 ];
 
-// 房间类型（人数限制信息待用户提供后再补充；仅区分类型标签）
+// 各房间人数限制（8-30 用户提供实测信息）：返回 '4-5人'/'2人'/''（未知）
+function roomCapacity(name) {
+  if (/沁园春/.test(name)) return '5-20人';
+  if (/朝天乐/.test(name)) return '3-5人';
+  if (/^(学士吟|清和风|江如练|浣溪沙)/.test(name)) return '3-6人';
+  if (/^低音研讨室/.test(name)) return '2人';
+  if (/^研讨间C08/.test(name)) return '4-6人';
+  if (/^研讨间C\d/.test(name)) return '4-5人';       // C07/C09
+  if (/^学习室|^静思间/.test(name)) return '1人';
+  const m = name.match(/^研讨间E(\d+)/);
+  if (m) {
+    const n = +m[1];
+    if (n === 3 || n === 19) return '3-4人';
+    if (n >= 9 && n <= 18) return '2人';               // E09-E18
+    return '4-5人';                                    // E01/02/04-08/20/22
+  }
+  return '';
+}
+
+// 房间类型标签（类型 + 人数，如「研讨间 4-5人」）
 function roomKind(name) {
-  if (/沁园春/.test(name)) return { label: '大型会议间', big: true };
-  if (/^(学士吟|朝天乐|朝天子|清和风|江如练|浣溪沙)/.test(name)) return { label: '研讨间', big: false };
-  if (/^低音研讨室/.test(name)) return { label: '低音研讨室', big: false };
-  if (/^学习室/.test(name)) return { label: '学习室', big: false };
-  if (/^静思间/.test(name)) return { label: '静思间', big: false };
-  if (/^研讨间/.test(name)) return { label: '研讨间', big: false };
-  if (/^研讨室\d/.test(name)) return { label: '研讨间', big: false };
-  return { label: '研讨间', big: false };
+  const cap = roomCapacity(name);
+  const capTxt = cap ? ' ' + cap : '';
+  if (/沁园春/.test(name)) return { label: '大型会议间' + capTxt, big: true };
+  if (/^(学士吟|朝天乐|朝天子|清和风|江如练|浣溪沙)/.test(name)) return { label: '研讨间' + capTxt, big: false };
+  if (/^低音研讨室/.test(name)) return { label: '低音研讨室' + capTxt, big: false };
+  if (/^学习室/.test(name)) return { label: '学习室' + capTxt, big: false };
+  if (/^静思间/.test(name)) return { label: '静思间' + capTxt, big: false };
+  if (/^研讨间/.test(name)) return { label: '研讨间' + capTxt, big: false };
+  if (/^研讨室\d/.test(name)) return { label: '研讨间' + capTxt, big: false };
+  return { label: '研讨间' + capTxt, big: false };
 }
 
 let tree = [];            // [{name, desc, rooms:[{name,total,remain}]}]
@@ -509,6 +530,17 @@ function updateMemCnt() {
   const el = document.getElementById('memCnt');
   el.textContent = n + ' 人';
   el.style.color = '#94a3b8';
+  // 选中房间人数校验提示（如「该房间需 4-5人」）
+  const rm = [...picked][0];
+  const cap = rm ? roomCapacity(rm) : '';
+  const m = cap ? cap.match(/^(\d+)(?:-(\d+))?/) : null;
+  if (m) {
+    const lo = +m[1], hi = +(m[2] || m[1]);
+    if (n < lo || n > hi) {
+      el.textContent = n + ` 人（该房间需 ${cap}）`;
+      el.style.color = '#b45309';
+    }
+  }
 }
 function getMembers() {
   return document.getElementById('memberIn').value

@@ -284,7 +284,7 @@
   /**
    * 语义触发：通过发送意图文本，靠大模型意图识别触发任务流
    * 适用于未拿到 taskId 的开发阶段
-   * @param {string} intentText - 意图文本（如"预约座位"、"定时抢座"）
+   * @param {string} intentText - 意图文本（如"预约座位"、"看座位图"）
    */
   function triggerByIntent(intentText) {
     sendToChat(intentText, false);
@@ -292,7 +292,7 @@
 
   /**
    * 触发业务流程（统一入口，自动选择触发方式）
-   * @param {string} flow - 流程名（bind/seat-reserve/timer-reserve/room-reserve/credit/chat）
+   * @param {string} flow - 流程名（bind/seat-reserve/room-reserve/seat-cancel/room-cancel/chat）
    * @param {object} options - { message, params }
    *   - message: 自定义意图文本（优先于默认）
    *   - params: 任务流初始参数（若有 taskId 则用 triggerTask，否则用 triggerByIntent）
@@ -322,15 +322,11 @@
     'bind': '149783',
     'unbind': '149783',
     'seat-reserve': '150328',
-    'timer-reserve': 'TODO_REPLACE_WITH_TIMER_RESERVE_TASK_ID',
-    'timer-manage': 'TODO_REPLACE_WITH_TIMER_MANAGE_TASK_ID',
     'room-reserve': '164198',
     // 按用户 8-28 提供的名称对应：取消座位预约=164200、取消研讨室预约=164201
     // （8-29 曾反向填写，如与平台实际不符请以任务流编辑 URL 的 taskId 为准对调）
     'seat-cancel': '164200',
     'room-cancel': '164201',
-    'analysis': 'TODO_REPLACE_WITH_ANALYSIS_TASK_ID',
-    'credit': 'TODO_REPLACE_WITH_CREDIT_TASK_ID',
     'chat': null, // chat 用语义触发，不需要 taskId
   };
 
@@ -339,13 +335,9 @@
     'bind': '绑定账号',
     'unbind': '解绑账号',
     'seat-reserve': '预约座位',
-    'timer-reserve': '设置定时抢座',
-    'timer-manage': '取消定时任务',
     'room-reserve': '预约研讨室',
     'room-cancel': '取消研讨室预约',
     'seat-cancel': '取消座位预约',
-    'analysis': '查空座',
-    'credit': '查信誉分',
     'chat': null, // chat 用调用方传入的 message
   };
 
@@ -454,8 +446,6 @@
         console.warn('[LibPanel] load-iframe 超星不支持，改为对话引导');
         if (payload.target === 'seatmap') {
           triggerByIntent('看座位图');
-        } else if (payload.target === 'analysis') {
-          triggerByIntent('查空座');
         }
         return;
       }
@@ -594,7 +584,7 @@
    * 跨 iframe 凭证同步（2026-08-25，绑定后右侧面板 403 修复）：
    * 本 iframe 若在绑定前加载，TOKEN 快照为空；另一个 iframe（登录面板）完成绑定
    * 写入 localStorage 后，storage 事件触发本函数重读 token——否则 apiGet 会
-   * 无凭证请求 /api/credit、/api/schedule 等需鉴权接口（status 是白名单所以
+   * 无凭证请求 /api/rooms 等需鉴权接口（status 是白名单所以
    * 账号卡片能正常显示"已绑定"，形成"状态已绑定但查询 403"的割裂现象）。
    * 同时清空缓存的 st_token（旧凭证已随解绑/重绑失效）。
    * 注意：UID 是加载期常量，无法在此重解析——常驻 iframe 首次绑定场景
@@ -746,7 +736,6 @@
     console.warn('[LibPanel] 生产环境无凭证，POST 降级为 CXBOT 对话引导:', path);
     // 根据路径推断意图文本
     const intentMap = {
-      '/api/schedule': '取消定时任务',
       '/api/auth': '绑定账号',
       '/api/reserve': '预约座位',
     };
@@ -815,22 +804,14 @@
       group: '查看',
       items: [
         {
-          id: 'floor-plan',
-          label: '楼层平面图',
-          icon: 'map',
-          desc: '浏览楼层与房间布局',
-          // 超星无 load-iframe 能力，改为语义触发（修复 P1-3：原 subview-floor-mini 不存在）
-          action: { type: 'trigger-task', flow: 'chat', message: '看楼层平面图' },
-          fallback: { type: 'prompt', message: '请在对话框输入「看楼层平面图」查看楼层布局' },
-        },
-        {
           id: 'seatmap',
-          label: '互动座位图',
+          label: '座位图 · 平面图',
           icon: 'grid',
-          desc: '实时座位状态与选座',
-          // 语义触发：让超星在对话区加载座位图 iframe
+          desc: '楼层平面图与实时座位状态',
+          // 语义触发：让超星在对话区加载座位图 iframe（seatmap.html 内含楼层平面图视图，
+          // 与原「楼层平面图」入口是同一页面，2026-08-30 合并去重）
           action: { type: 'trigger-task', flow: 'chat', message: '看座位图' },
-          fallback: { type: 'prompt', message: '请在对话框输入「看座位图」查看互动座位图' },
+          fallback: { type: 'prompt', message: '请在对话框输入「看座位图」查看楼层平面图与座位状态' },
         },
         {
           id: 'roommap',
@@ -840,13 +821,6 @@
           // 语义触发：让超星在对话区加载研讨室地图 iframe（roommap.html）
           action: { type: 'trigger-task', flow: 'chat', message: '看研讨室地图' },
           fallback: { type: 'prompt', message: '请在对话框输入「看研讨室地图」查看研讨室分布与余量' },
-        },
-        {
-          id: 'analysis',
-          label: '态势分析',
-          icon: 'chart',
-          desc: '占用率与空座推荐',
-          action: { type: 'self', subview: 'analysis-mini' },
         },
       ],
     },
@@ -868,14 +842,6 @@
           desc: '查看并取消座位预约',
           action: { type: 'trigger-task', flow: 'seat-cancel' },
           fallback: { type: 'prompt', message: '请在对话框输入「取消座位预约」查看并取消座位预约' },
-        },
-        {
-          id: 'timer',
-          label: '定时抢座',
-          icon: 'clock',
-          desc: '设置每日自动抢座',
-          action: { type: 'trigger-task', flow: 'timer-reserve' },
-          fallback: { type: 'prompt', message: '请在对话框输入「设置定时抢座」创建自动抢座任务' },
         },
         {
           id: 'room-reserve',
@@ -906,13 +872,45 @@
           action: { type: 'trigger-task', flow: 'bind' },
           fallback: { type: 'prompt', message: '请在对话框输入「绑定账号」开始绑定图书馆账号' },
         },
+      ],
+    },
+    {
+      group: '官网快捷',
+      items: [
         {
-          id: 'credit',
-          label: '信誉分查询',
-          icon: 'shield',
-          desc: '查看信誉分与违约记录',
-          action: { type: 'trigger-task', flow: 'credit' },
-          fallback: { type: 'prompt', message: '请在对话框输入「查信誉分」查询信誉分' },
+          id: 'lib-home',
+          label: '图书馆官网',
+          icon: 'home',
+          desc: '图书馆主页：通知公告、开放安排',
+          action: { type: 'open-link', url: 'http://lib.gzhu.edu.cn/index.htm' },
+        },
+        {
+          id: 'lib-booking',
+          label: 'IC空间预约',
+          icon: 'map',
+          desc: '官网空间预约系统（本助手数据同源）',
+          action: { type: 'open-link', url: 'https://libbooking.gzhu.edu.cn/' },
+        },
+        {
+          id: 'lib-mylib',
+          label: '借阅查询',
+          icon: 'list',
+          desc: '我的图书馆：借阅记录、续借',
+          action: { type: 'open-link', url: 'http://202.192.41.10/MyLib/myLib/' },
+        },
+        {
+          id: 'lib-eres',
+          label: '电子资源',
+          icon: 'grid',
+          desc: '知网、万方等数据库导航',
+          action: { type: 'open-link', url: 'http://202.192.41.10/w/ernav2/index' },
+        },
+        {
+          id: 'lib-offcampus',
+          label: '校外访问',
+          icon: 'door',
+          desc: 'VPN / WebVPN 校外访问入口',
+          action: { type: 'open-link', url: 'http://lib.gzhu.edu.cn/list.jsp?urltype=tree.TreeTempUrl&wbtreeid=1231' },
         },
       ],
     },
