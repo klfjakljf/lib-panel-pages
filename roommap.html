@@ -102,8 +102,23 @@
   .day-chip .dw { color: #94a3b8; font-weight: 400; margin-left: 4px; font-size: 11px; }
   .day-chip.on .dw { color: #3b82f6; }
   #bar select { padding: 5px 6px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 12px; background: #fff; }
-  #memberIn { flex: 1; min-width: 160px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px;
-              font-size: 12px; }
+  /* 学号 chips 输入框：圆边小框包住已填学号，×删除，点框内文字可改 */
+  .membox { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+            border: 1px solid #d0d5dd; border-radius: 8px; padding: 3px 6px;
+            background: #fff; min-height: 32px; cursor: text; }
+  .membox:focus-within { border-color: #3b82f6; }
+  .mchip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid #bfdbfe;
+           background: #eff6ff; color: #1d4ed8; border-radius: 999px; padding: 1px 4px 1px 10px;
+           font-size: 12px; line-height: 1.5; }
+  .mchip .sid { cursor: text; }
+  .mchip .x { cursor: pointer; color: #93c5fd; font-weight: 700; width: 16px; height: 16px;
+              border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+              font-size: 12px; line-height: 1; }
+  .mchip .x:hover { background: #dbeafe; color: #1d4ed8; }
+  .mchip input { border: 0; outline: 0; width: 110px; font-size: 12px; padding: 0;
+                 background: transparent; color: #1d4ed8; }
+  .mem-input { flex: 1; min-width: 110px; border: 0; outline: 0; font-size: 12px; padding: 4px 2px;
+               background: transparent; }
   #submitBtn { margin-top: 8px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
                background: #2563eb; color: #fff; font-size: 14px; cursor: pointer; }
   #submitBtn:disabled { background: #9ca3af; cursor: not-allowed; }
@@ -145,6 +160,18 @@
   <div class="fchip" data-k="会议间" onclick="setKindFilter('会议间')">大型会议间</div>
 </div>
 
+<!-- 人数筛选：按房间可容纳人数过滤（N人 = 房间人数范围包含 N） -->
+<div class="filter-row" id="capFilterRow" style="margin-top:0;">
+  <span style="font-size:11px;color:#94a3b8;align-self:center;flex-shrink:0;">人数</span>
+  <div class="fchip on" data-c="0" onclick="setCapFilter(0)">不限</div>
+  <div class="fchip" data-c="1" onclick="setCapFilter(1)">1人</div>
+  <div class="fchip" data-c="2" onclick="setCapFilter(2)">2人</div>
+  <div class="fchip" data-c="3" onclick="setCapFilter(3)">3人</div>
+  <div class="fchip" data-c="4" onclick="setCapFilter(4)">4人</div>
+  <div class="fchip" data-c="5" onclick="setCapFilter(5)">5人</div>
+  <div class="fchip" data-c="6" onclick="setCapFilter(6)">6人以上</div>
+</div>
+
 <!-- 我的研讨室预约（有预约时才显示） -->
 <div class="myresv" id="myresv" style="display:none">
   <div class="myresv-head">
@@ -177,6 +204,10 @@
     <span style="font-size:12px;color:#64748b;">已选：</span>
     <div id="selRooms"><span class="ph">点击房间卡片选中</span></div>
   </div>
+  <!-- 选中房间的当日已约时段（选房/切日期/时段数据加载后联动刷新） -->
+  <div class="bar-row" id="selBusyRow" style="display:none;margin-top:4px;font-size:12px;color:#64748b;">
+    <div id="selBusy"></div>
+  </div>
   <div class="bar-row" style="margin-top:6px;">
     <div class="day-chip on" id="day0" onclick="setDay(0)"></div>
     <div class="day-chip" id="day1" onclick="setDay(1)"></div>
@@ -187,8 +218,15 @@
     结束 <select id="selEnd"></select>
   </div>
   <div class="bar-row" style="margin-top:6px;">
-    <input id="memberIn" placeholder="同行学号（逗号分隔，可留空）">
-    <span id="memCnt" style="font-size:11px;color:#94a3b8;">1 人</span>
+    <div class="membox" id="memBox">
+      <div id="memChips" style="display:contents;"></div>
+      <input id="memberIn" class="mem-input" inputmode="numeric"
+             placeholder="输入同学学号，回车添加（不用填自己的）">
+    </div>
+    <span id="memCnt" style="font-size:11px;color:#b45309;flex-shrink:0;align-self:center;"></span>
+  </div>
+  <div class="bar-row" style="margin-top:3px;font-size:11px;color:#94a3b8;">
+    同学数看小框即可（人数=学号框数+发起人）；点学号框内文字可修改，点 × 删除
   </div>
   <div id="result"></div>
   <button id="submitBtn" onclick="submitReserve()">预约选中的研讨室</button>
@@ -231,6 +269,15 @@ function roomCapacity(name) {
   return '';
 }
 
+// 人数限制数值化：'4-5人' → {lo:4, hi:5}；未知房间返回 null（不拦截，后端兜底校验）
+function capRange(name) {
+  const cap = roomCapacity(name);
+  if (!cap) return null;
+  const m = cap.match(/^(\d+)(?:-(\d+))?人$/);
+  if (!m) return null;
+  return { lo: +m[1], hi: +(m[2] || m[1]) };
+}
+
 // 房间类型标签（类型 + 人数，如「研讨间 4-5人」）
 function roomKind(name) {
   const cap = roomCapacity(name);
@@ -268,6 +315,20 @@ function setKindFilter(k) {
   render();
 }
 
+// 人数筛选（0=不限；N=房间人数范围 [lo,hi] 包含 N；6=hi>=6）
+let capFilter = 0;
+function setCapFilter(n) {
+  capFilter = n;
+  document.querySelectorAll('#capFilterRow .fchip').forEach(c => c.classList.toggle('on', +c.dataset.c === n));
+  render();
+}
+function passCapFilter(name) {
+  if (!capFilter) return true;
+  const cap = capRange(name);
+  if (!cap) return false;           // 人数未知的房间在具体人数筛选下隐藏
+  return capFilter === 6 ? cap.hi >= 6 : (cap.lo <= capFilter && capFilter <= cap.hi);
+}
+
 function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 function toHHMM(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
 // 时间 → 时间轴百分比
@@ -278,6 +339,7 @@ function showUnbound() {
   document.getElementById('unboundView').style.display = 'block';
   document.getElementById('groups').style.display = 'none';
   document.getElementById('filterRow').style.display = 'none';
+  document.getElementById('capFilterRow').style.display = 'none';
   document.getElementById('myresv').style.display = 'none';
   document.getElementById('testStatus').textContent = '未绑定';
 }
@@ -286,6 +348,7 @@ function showError(msg) {
   document.getElementById('errorView').style.display = 'block';
   document.getElementById('groups').style.display = 'none';
   document.getElementById('filterRow').style.display = 'none';
+  document.getElementById('capFilterRow').style.display = 'none';
   document.getElementById('myresv').style.display = 'none';
   document.getElementById('testStatus').textContent = '加载失败';
 }
@@ -392,7 +455,8 @@ function render() {
   host.style.display = '';
   let html = '';
   for (const g of tree) {
-    const rooms = kindFilter === 'all' ? g.rooms : g.rooms.filter(r => kindKey(r.name) === kindFilter);
+    const rooms = g.rooms.filter(r =>
+      (kindFilter === 'all' || kindKey(r.name) === kindFilter) && passCapFilter(r.name));
     if (!rooms.length) continue;  // 筛选后空分组不渲染
     html += `<div class="group"><div class="group-head">
       <div class="group-title">${escapeHtml(g.name)}
@@ -425,6 +489,7 @@ function render() {
   }
   host.innerHTML = html;
   renderSelRooms();
+  renderSelBusy();
   updateMemCnt();
 }
 
@@ -443,6 +508,20 @@ function renderSelRooms() {
   el.innerHTML = picked.size
     ? [...picked].map(escapeHtml).join('、')
     : '<span class="ph">点击房间卡片选中</span>';
+}
+
+// 选中房间的当日已约时段（底部栏提示，选房/切日期/时段加载后由 render() 联动）
+function renderSelBusy() {
+  const row = document.getElementById('selBusyRow');
+  const el = document.getElementById('selBusy');
+  if (!row || !el) return;
+  const rm = [...picked][0];
+  if (!rm || !slotsOk) { row.style.display = 'none'; return; }
+  const busy = slotsByRoom[rm] || [];
+  el.innerHTML = busy.length
+    ? `该房间今日已约：<span style="color:#dc2626">${busy.map(([b, e]) => `${escapeHtml(b)}–${escapeHtml(e)}`).join('、')}</span>`
+    : `该房间今日<span style="color:#059669">全天空闲</span>`;
+  row.style.display = '';
 }
 
 // ---------- 时段下拉（午休硬约束：上午段 ≤12:00，下午段 ≥13:30）----------
@@ -481,6 +560,8 @@ function buildEnd() {
   render();  // 时段变化 → 时间轴高亮/冲突标记联动
 }
 document.getElementById('selStart').onchange = buildEnd;
+// 结束时间变化 → 时间轴蓝色选择框联动（此前缺失：改结束时间后蓝框停在默认最大时长）
+document.getElementById('selEnd').onchange = render;
 
 // ---------- 日期（chip 显示「今天 8/30 周六」）----------
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -524,29 +605,116 @@ function setDay(d) {
   loadSlots();
 }
 
-// ---------- 成员 ----------
-function updateMemCnt() {
-  const n = getMembers().length + 1;
+// ---------- 成员（学号 chips 组件） ----------
+let memberSids = [];      // 已填学号（不含发起人）
+let editingIdx = -1;      // 正在编辑的 chip 下标；-1 = 无
+// 广大现行学号：本科 11 位（首位 3，如 32312100063），老规则/研究生 10 位；
+// 校验放宽为 8-12 位纯数字兜底（与后端 find_member_accno 查询口径一致）
+const SID_RE = /^\d{8,12}$/;
+
+function getMembers() { return [...memberSids]; }
+
+function renderChips() {
+  const host = document.getElementById('memChips');
+  host.innerHTML = memberSids.map((sid, i) => {
+    if (i === editingIdx) {
+      return `<span class="mchip" data-i="${i}"><input id="editSid" value="${escapeHtml(sid)}"></span>`;
+    }
+    return `<span class="mchip" data-i="${i}"><span class="sid">${escapeHtml(sid)}</span>` +
+           `<span class="x" title="删除">×</span></span>`;
+  }).join('');
+  if (editingIdx >= 0) {
+    const inp = document.getElementById('editSid');
+    if (inp) {
+      inp.focus(); inp.select();
+      inp.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); commitEdit(inp.value); }
+        if (e.key === 'Escape') { editingIdx = -1; renderChips(); }
+      };
+      inp.onblur = () => commitEdit(inp.value);
+    }
+  }
+  updateMemCnt();
+}
+
+// 提交编辑中的 chip：合法 → 原位更新；清空 → 删除；非法 → 恢复原文案并提示
+function commitEdit(v) {
+  if (editingIdx < 0) return;
+  const i = editingIdx;
+  editingIdx = -1;
+  v = v.trim();
+  if (!v) { memberSids.splice(i, 1); renderChips(); return; }
+  if (!SID_RE.test(v)) { flashMemWarn(`学号应为 8-12 位数字（当前「${v}」）`); renderChips(); return; }
+  const dup = memberSids.indexOf(v);
+  if (dup >= 0 && dup !== i) { flashMemWarn(`学号 ${v} 已填过`); renderChips(); return; }
+  memberSids[i] = v;
+  renderChips();
+}
+
+// 输入框提交：回车/逗号/空格/失焦 → 校验后入列
+function commitInput(v) {
+  v = (v || '').trim();
+  const inp = document.getElementById('memberIn');
+  if (!v) { inp.value = ''; return; }
+  // 支持一次粘贴多个（逗号/空格分隔）
+  const parts = v.split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean);
+  const bad = parts.filter(p => !SID_RE.test(p));
+  const ok = parts.filter(p => SID_RE.test(p) && !memberSids.includes(p));
+  memberSids.push(...ok);
+  inp.value = '';
+  renderChips();
+  if (bad.length) flashMemWarn(`${bad.length} 项不是有效学号（应为 8-12 位数字）：${bad.join('、')}`);
+  else if (ok.length < parts.filter(p => SID_RE.test(p)).length) flashMemWarn('重复学号已忽略');
+}
+
+function flashMemWarn(txt) {
   const el = document.getElementById('memCnt');
-  el.textContent = n + ' 人';
-  el.style.color = '#94a3b8';
-  // 选中房间人数校验提示（如「该房间需 4-5人」）
+  el.textContent = txt;
+  el.style.color = '#dc2626';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { if (el.style.color === 'rgb(220, 38, 38)') updateMemCnt(); }, 3000);
+}
+
+function updateMemCnt() {
+  const el = document.getElementById('memCnt');
+  const n = memberSids.length + 1;  // +1 = 发起人
+  // 常态不显示人数（chips 即直观计数），只在选中房间人数不符时预警
   const rm = [...picked][0];
   const cap = rm ? roomCapacity(rm) : '';
   const m = cap ? cap.match(/^(\d+)(?:-(\d+))?/) : null;
   if (m) {
     const lo = +m[1], hi = +(m[2] || m[1]);
-    if (n < lo || n > hi) {
-      el.textContent = n + ` 人（该房间需 ${cap}）`;
-      el.style.color = '#b45309';
-    }
+    if (n < lo) { el.textContent = `需 ${cap}，还差 ${lo - n} 位`; el.style.color = '#b45309'; return; }
+    if (n > hi) { el.textContent = `需 ${cap}，超出 ${n - hi} 位`; el.style.color = '#b45309'; return; }
   }
+  el.textContent = '';
 }
-function getMembers() {
-  return document.getElementById('memberIn').value
-    .split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean);
-}
-document.getElementById('memberIn').oninput = updateMemCnt;
+
+// chips 事件：点文字进入编辑，点 × 删除
+document.getElementById('memChips').addEventListener('click', e => {
+  const chip = e.target.closest('.mchip');
+  if (!chip) return;
+  const i = +chip.dataset.i;
+  if (e.target.classList.contains('x')) {
+    memberSids.splice(i, 1); renderChips();
+  } else if (editingIdx !== i) {
+    editingIdx = i; renderChips();
+  }
+});
+// 点框内空白处聚焦输入框
+document.getElementById('memBox').addEventListener('click', e => {
+  if (!e.target.closest('.mchip')) document.getElementById('memberIn').focus();
+});
+const _memIn = document.getElementById('memberIn');
+_memIn.onkeydown = e => {
+  if (e.key === 'Enter' || e.key === ',' || e.key === '，' || e.key === ' ' || e.key === '、') {
+    e.preventDefault(); commitInput(_memIn.value);
+  } else if (e.key === 'Backspace' && !_memIn.value && memberSids.length) {
+    memberSids.pop(); renderChips();
+  }
+};
+_memIn.onblur = () => commitInput(_memIn.value);
+_memIn.oninput = updateMemCnt;
 
 // ---------- 提交 ----------
 async function submitReserve() {
@@ -557,6 +725,20 @@ async function submitReserve() {
   const selStart = document.getElementById('selStart');
   const selEnd = document.getElementById('selEnd');
   if (!selStart.value || !selEnd.value) { showResult('err', '无可约时段'); return; }
+
+  // 人数硬校验（与后端 _check_room_rules 同规则，拦在提交前免一次 400 往返）
+  const memberCnt = getMembers().length + 1;  // +1 = 发起人
+  for (const rm of picked) {
+    const cap = capRange(rm);
+    if (cap && (memberCnt < cap.lo || memberCnt > cap.hi)) {
+      const need = cap.lo === cap.hi ? `恰好 ${cap.lo} 人` : `${cap.lo}-${cap.hi} 人`;
+      const hint = memberCnt < cap.lo
+        ? `，还差 ${cap.lo - memberCnt} 位同学（填其学号）`
+        : `，超出上限 ${memberCnt - cap.hi} 人`;
+      showResult('err', `${rm} 需要 ${need}，当前 ${memberCnt} 人${hint}`);
+      return;
+    }
+  }
 
   const date = ymdOf(pickDay);
   const period = `${selStart.value}-${selEnd.value}`;
@@ -574,6 +756,7 @@ async function submitReserve() {
     if (resp && resp.code === 0 && resp.ok) {
       showResult('ok', resp.msg || '预约成功');
       picked.clear();  // 成功后清空已选，防误触重复预约
+      memberSids = []; editingIdx = -1; renderChips();  // 学号 chips 一并清空
       setTimeout(forceRefresh, 1200);  // 刷新房间列表 + 时段 + 我的预约
     } else {
       showResult('err', (resp && resp.msg) || '预约失败，请稍后重试');
@@ -648,6 +831,7 @@ async function init() {
   document.getElementById('errorView').style.display = 'none';
   document.getElementById('groups').style.display = '';
   document.getElementById('filterRow').style.display = '';
+  document.getElementById('capFilterRow').style.display = '';
   try {
     const resp = await apiGet('/api/rooms', { type: 'room' });
     if (resp && resp.code === 401) { showUnbound(); return; }
