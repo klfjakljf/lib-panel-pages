@@ -20,17 +20,13 @@
     </div>
   </div>
 
-  <!-- 我的预约（后端无独立API，引导对话查询） -->
+  <!-- 我的预约（直连 /api/reservations，座位/研讨室分组展示，支持一键取消） -->
   <div class="panel-section">
     <div class="panel-section-title">我的预约</div>
-    <div id="reservationList">
-      <div class="card js-reservation-trigger" style="cursor:pointer;">
-        <div class="empty-state">
-          <span id="reservationIcon"></span>
-          <div>点击查看我的预约</div>
-          <div style="margin-top:4px;font-size:11px;">在对话框输入「我的预约」</div>
-        </div>
-      </div>
+    <div class="card" id="resvCard">
+      <div class="skeleton-line" style="width:60%;height:14px;margin-bottom:8px;"></div>
+      <div class="skeleton-line" style="width:90%;height:12px;margin-bottom:6px;"></div>
+      <div class="skeleton-line" style="width:70%;height:12px;"></div>
     </div>
   </div>
 
@@ -40,7 +36,7 @@
 <script src="shared.js"></script>
 <script>
 (function() {
-  const { apiGet, apiPost, ICONS, escapeHtml, sendToParent, MSG, MSG_FROM_PARENT, onParentMessage, setToken, clearToken, triggerFlow } = window.LibPanel;
+  const { apiGet, apiPost, ICONS, escapeHtml, MSG_FROM_PARENT, onParentMessage, setToken, clearToken, triggerFlow } = window.LibPanel;
 
   // ---------- 显示模式（URL 参数 mode，2026-08-24）----------
   // login：登录专注视图（账号管理任务流嵌入节点用）——只显示账号卡片，隐藏其余三卡片
@@ -279,31 +275,121 @@
     }
   }
 
-  // ---------- 查询我的预约（引导对话） ----------
-  window.askReservations = function() {
-    sendToParent(MSG.TRIGGER_TASK, { flow: 'chat', message: '我的预约' });
-  };
+  // ---------- 我的预约（直连 /api/reservations：座位/研讨室分组 + 一键取消） ----------
+  // 与 roommap.html 同源正则：匹配研讨室类房间名，其余归为座位预约
+  const ROOM_RESV_RE = /^(研讨间|研讨室|低音研讨室|学习室|静思间|学士吟|朝天乐|朝天子|清和风|江如练|浣溪沙|沁园春)/;
+
+  function resvItemHtml(it) {
+    const rid = escapeHtml(String(it.resvId == null ? '' : it.resvId));
+    return `
+      <div class="list-item" style="align-items:center;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:500;word-break:break-all;">${escapeHtml(it.seat || '--')}</div>
+          <div style="font-size:var(--text-sm);color:var(--color-text-secondary);margin-top:2px;">${escapeHtml(it.begin || '')} - ${escapeHtml(it.end || '')}</div>
+        </div>
+        <button type="button" class="btn btn-sm js-cancel-resv" data-resvid="${rid}" style="flex-shrink:0;">取消</button>
+      </div>`;
+  }
+
+  function renderReservations(resp) {
+    const card = document.getElementById('resvCard');
+    if (!card) return;
+
+    // 未绑定（401）：提示而非报错（view 模式下账号卡片另有绑定引导，这里只做轻提示）
+    if (resp && resp.code === 401) {
+      card.innerHTML = `
+        <div class="empty-state">
+          <span>${ICONS.list}</span>
+          <div>绑定账号后可查看预约</div>
+        </div>`;
+      return;
+    }
+
+    // 查询失败：显示具体原因 + 重试按钮（与账号卡片同款交互）
+    if (!resp || resp.code !== 0) {
+      card.innerHTML = `
+        <div class="card-header">${ICONS.list} 我的预约</div>
+        <div class="alert alert-warning">
+          <span>${ICONS.alert}</span>
+          <div>${escapeHtml((resp && resp.msg) || '查询失败')}</div>
+        </div>
+        <button type="button" class="btn btn-block" style="margin-top:10px;" id="retryResvBtn">重试</button>`;
+      card.querySelector('#retryResvBtn').addEventListener('click', () => refreshResv());
+      return;
+    }
+
+    const items = (resp.reservations || []).slice()
+      .sort((a, b) => String(a.begin || '').localeCompare(String(b.begin || '')));
+    const seatItems = items.filter(it => !ROOM_RESV_RE.test(it.seat || ''));
+    const roomItems = items.filter(it => ROOM_RESV_RE.test(it.seat || ''));
+
+    if (!items.length) {
+      card.innerHTML = `
+        <div class="empty-state">
+          <span>${ICONS.list}</span>
+          <div>暂无预约（可查看今明后 3 天）</div>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+    if (seatItems.length) {
+      html += `<div class="card-header">座位预约（${seatItems.length}）</div>` + seatItems.map(resvItemHtml).join('');
+    }
+    if (roomItems.length) {
+      html += (seatItems.length ? '<div style="height:8px;"></div>' : '')
+        + `<div class="card-header">研讨室预约（${roomItems.length}）</div>` + roomItems.map(resvItemHtml).join('');
+    }
+    card.innerHTML = html;
+  }
+
+  async function cancelResv(resvId) {
+    if (!confirm('确定取消该预约吗？')) return;
+    const btn = document.querySelector(`.js-cancel-resv[data-resvid="${CSS.escape(String(resvId))}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '取消中…'; }
+    try {
+      const resp = await apiPost('/api/cancel', { target: String(resvId) });
+      if (resp && resp.code === 0) {
+        await refreshResv();  // 取消成功：仅刷新预约分组（账号状态不受影响）
+      } else {
+        alert((resp && resp.msg) || '取消失败，请稍后重试');
+        if (btn) { btn.disabled = false; btn.textContent = '取消'; }
+      }
+    } catch (e) {
+      alert('取消失败：' + (e.message || e));
+      if (btn) { btn.disabled = false; btn.textContent = '取消'; }
+    }
+  }
 
   // ---------- 刷新所有数据 ----------
-  async function refreshAll() {
+  // 拆分两类接口的刷新节奏：
+  // - /api/status：仅查 DB，轻量，可 60s 轮询
+  // - /api/reservations：FC 无状态，每次调用都真实登录图书馆系统——重量级，
+  //   不能 60s 轮询（防图书馆侧登录限流/账号锁定），仅初始化/事件/手动/5 分钟级刷新
+  async function refreshStatus() {
+    let statusData;
     try {
-      const [statusResp] = await Promise.allSettled([
-        apiGet('/api/status'),
-      ]);
-
-      // 修复 P1-2：rejected 时把错误信息包装成 {code:-1, msg} 传给渲染函数，
-      // 让用户看到具体原因（如「403：签名或 Token 校验失败（uid=test_user, token_len=0）」）
-      // 而不是误导性的「无法连接服务器」
-      const statusData = statusResp.status === 'fulfilled'
-        ? statusResp.value
-        : { code: -1, msg: (statusResp.reason && statusResp.reason.message) || '网络错误' };
-
-      // 直接传整个响应对象给渲染函数（不是 .data）
-      renderAccount(statusData);
+      const r = await apiGet('/api/status');
+      statusData = r;
     } catch (e) {
-      console.error('刷新失败:', e);
-      renderAccount(null);
+      statusData = { code: -1, msg: (e && e.message) || '网络错误' };
     }
+    renderAccount(statusData);
+  }
+
+  async function refreshResv() {
+    let resvData;
+    try {
+      const r = await apiGet('/api/reservations');
+      resvData = r;
+    } catch (e) {
+      resvData = { code: -1, msg: (e && e.message) || '网络错误' };
+    }
+    renderReservations(resvData);
+  }
+
+  async function refreshAll() {
+    await Promise.allSettled([refreshStatus(), refreshResv()]);
   }
 
   // ---------- 监听父窗口消息 ----------
@@ -317,21 +403,27 @@
   });
 
   // ---------- 初始化 ----------
-  // 设置预约区图标
-  document.getElementById('reservationIcon').innerHTML = ICONS.list;
-
-  // 修复 P1-5：reservation 用事件委托
-  document.querySelector('.js-reservation-trigger').addEventListener('click', () => askReservations());
+  // 我的预约取消按钮：事件委托挂在卡片容器上（innerHTML 重渲染后监听器仍生效）
+  document.getElementById('resvCard').addEventListener('click', (e) => {
+    const btn = e.target.closest('.js-cancel-resv');
+    if (btn && !btn.disabled) cancelResv(btn.getAttribute('data-resvid'));
+  });
 
   refreshAll();
 
   // 自动刷新策略：使用 Page Visibility API，仅在页面可见时刷新
   // 避免用户切到其他页签时浪费 FC 调用次数
   let refreshTimer = null;
+  let tickCount = 0;
 
   function startAutoRefresh() {
     if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(refreshAll, 60000);
+    tickCount = 0;
+    refreshTimer = setInterval(() => {
+      tickCount++;
+      refreshStatus();                       // 轻量：DB 查询，60s
+      if (tickCount % 5 === 0) refreshResv(); // 重量：图书馆登录，5 分钟一次
+    }, 60000);
     // 跨 iframe 凭证秒级同步（2026-08-24）：同一 Pages origin 的多个 iframe
     // （对话内嵌登录面板 / 右侧常驻面板）共享 localStorage，storage 事件在
     // 写入方之外的其他同源窗口触发——绑定 setToken / 解绑 clearToken 时，

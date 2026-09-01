@@ -738,6 +738,8 @@
     const intentMap = {
       '/api/auth': '绑定账号',
       '/api/reserve': '预约座位',
+      '/api/room/reserve': '预约研讨室',
+      '/api/cancel': '取消预约',
     };
     const intent = intentMap[path] || '请在对话区操作';
     triggerByIntent(intent);
@@ -874,46 +876,6 @@
         },
       ],
     },
-    {
-      group: '官网快捷',
-      items: [
-        {
-          id: 'lib-home',
-          label: '图书馆官网',
-          icon: 'home',
-          desc: '图书馆主页：通知公告、开放安排',
-          action: { type: 'open-link', url: 'http://lib.gzhu.edu.cn/index.htm' },
-        },
-        {
-          id: 'lib-booking',
-          label: 'IC空间预约',
-          icon: 'map',
-          desc: '官网空间预约系统（本助手数据同源）',
-          action: { type: 'open-link', url: 'https://libbooking.gzhu.edu.cn/' },
-        },
-        {
-          id: 'lib-mylib',
-          label: '借阅查询',
-          icon: 'list',
-          desc: '我的图书馆：借阅记录、续借',
-          action: { type: 'open-link', url: 'http://202.192.41.10/MyLib/myLib/' },
-        },
-        {
-          id: 'lib-eres',
-          label: '电子资源',
-          icon: 'grid',
-          desc: '知网、万方等数据库导航',
-          action: { type: 'open-link', url: 'http://202.192.41.10/w/ernav2/index' },
-        },
-        {
-          id: 'lib-offcampus',
-          label: '校外访问',
-          icon: 'door',
-          desc: 'VPN / WebVPN 校外访问入口',
-          action: { type: 'open-link', url: 'http://lib.gzhu.edu.cn/list.jsp?urltype=tree.TreeTempUrl&wbtreeid=1231' },
-        },
-      ],
-    },
   ];
 
   // ---------- SVG 图标库 ----------
@@ -921,12 +883,9 @@
     home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
     map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>',
     grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
-    chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
     seat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4"/><path d="M2 20h20"/><path d="M4 12v8"/><path d="M18 12v8"/></svg>',
-    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
     door: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/><line x1="15" y1="12" x2="15.01" y2="12"/></svg>',
     link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
-    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
     list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',

@@ -131,15 +131,6 @@
       return;
     }
 
-    if (action.type === 'open-link') {
-      // 官网跳转：新窗口打开（iframe 内 window.open 需要平台 sandbox 允许 popups；
-      // 被拦截时降级为提示浮层，用户可复制地址手动访问）
-      const win = window.open(action.url, '_blank', 'noopener');
-      if (!win) {
-        showPrompt(item.label, '新窗口被拦截，请复制地址访问：' + action.url);
-      }
-      return;
-    }
   };
 
   function findItem(id) {
